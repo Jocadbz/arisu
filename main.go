@@ -2,12 +2,14 @@ package main
 
 import (
     "bufio"
+    "bytes"
     "encoding/json"
     "fmt"
     "os"
     "os/exec"
     "path/filepath"
     "strings"
+    "io"
 )
 
 // main is the entry point of the program.
@@ -100,6 +102,7 @@ func main() {
 }
 
 // handleCommands detects and executes bash commands in <RUN> tags.
+// handleCommands detects and executes bash commands in <RUN> tags.
 func handleCommands(response string, client *Client) {
     commands := extractCommands(response)
     for _, command := range commands {
@@ -111,13 +114,23 @@ func handleCommands(response string, client *Client) {
         confirm = strings.TrimSpace(confirm)
 
         if confirm == "y" {
-            output, err := exec.Command("bash", "-c", command).CombinedOutput()
+            // Buffer to capture the command output
+            var outputBuf bytes.Buffer
+            // Set up the command
+            cmd := exec.Command("bash", "-c", command)
+            // Stream stdout to both terminal and buffer
+            cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
+            // Stream stderr to both terminal and buffer
+            cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
+            // Run the command
+            err := cmd.Run()
             if err != nil {
                 fmt.Printf("Command failed with error: %v\n", err)
             }
-            fmt.Printf("Output: %s\n", string(output))
+            // Retrieve the captured output
+            output := outputBuf.String()
             // Add output to conversation context
-            client.AddMessage("user", "Command output: "+string(output))
+            client.AddMessage("user", "Command output: "+output)
         } else {
             fmt.Println("Command not executed.")
         }
