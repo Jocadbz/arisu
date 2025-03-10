@@ -10,12 +10,50 @@ import (
     "os/exec"
     "path/filepath"
     "strings"
+    "time" // Added for timestamp generation
+
+    "github.com/google/generative-ai-go/genai" // Required for genai.Content type
 )
+
+// logMessages appends new messages from the chat history to the log file starting from startIdx.
+func logMessages(logFile string, history []*genai.Content, startIdx int) error {
+    f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+
+    for i := startIdx; i < len(history); i++ {
+        msg := history[i]
+        timestamp := time.Now().Format("2006-01-02 15:04:05")
+        role := msg.Role
+        content := ""
+        for _, part := range msg.Parts {
+            if text, ok := part.(genai.Text); ok {
+                content += string(text)
+            }
+        }
+        logEntry := fmt.Sprintf("[%s] %s: %s\n", timestamp, role, content)
+        if _, err := f.WriteString(logEntry); err != nil {
+            return err
+        }
+    }
+    return nil
+}
 
 // main é o ponto de entrada do programa.
 func main() {
     configDir := filepath.Join(os.Getenv("HOME"), ".config", "arisu")
     configFile := filepath.Join(configDir, "config.json")
+
+    // Set up log directory and file
+    logDir := filepath.Join(configDir, "log")
+    if err := os.MkdirAll(logDir, 0700); err != nil {
+        fmt.Printf("Error creating log directory: %v\n", err)
+        return
+    }
+    timestamp := time.Now().Format("20060102_150405") // Format: YYYYMMDD_HHMMSS
+    logFile := filepath.Join(logDir, "conversation_"+timestamp+".log")
 
     apiKey := loadAPIKey(configFile)
     if apiKey == "" {
@@ -42,11 +80,16 @@ func main() {
             return
         }
         handleResponse(response, client)
+        // Log the entire conversation history for single command
+        if err := logMessages(logFile, client.cs.History, 0); err != nil {
+            fmt.Printf("Error logging messages: %v\n", err)
+        }
         return
     }
 
     fmt.Println("For multi-line input, end with a blank line.")
     scanner := bufio.NewScanner(os.Stdin)
+    lastLoggedIndex := 0 // Track the last logged message index
     for {
         fmt.Print("$ ")
         var inputLines []string
@@ -80,6 +123,11 @@ func main() {
             continue
         }
         handleResponse(response, client)
+        // Log new messages added to the history
+        if err := logMessages(logFile, client.cs.History, lastLoggedIndex); err != nil {
+            fmt.Printf("Error logging messages: %v\n", err)
+        }
+        lastLoggedIndex = len(client.cs.History) // Update the last logged index
     }
 }
 
