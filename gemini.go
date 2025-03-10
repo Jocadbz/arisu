@@ -11,32 +11,36 @@ import (
     "google.golang.org/api/option"
 )
 
-// Client represents a client for interacting with the generative AI API.
+// Client representa um cliente para interagir com a API de IA generativa.
 type Client struct {
-    cs *genai.ChatSession // Chat session to manage conversation history
+    cs *genai.ChatSession
 }
 
-// NewClient initializes a new Client with the provided API key.
+// NewClient inicializa um novo Client com a chave API fornecida.
 func NewClient(apiKey string) *Client {
     ctx := context.Background()
     genaiClient, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
     if err != nil {
-        panic(err) // In production, consider returning an error instead
+        panic(err)
     }
     model := genaiClient.GenerativeModel("gemini-1.5-flash")
 
-    // Set the initial system instruction (context for the conversation)
     initialPrompt := fmt.Sprintf(
         "This conversation is running inside a terminal session on %s.\n\n"+
-            "To better assist me, I'll let you run bash commands on my computer.\n\n"+
-            "To do so, include, anywhere in your answer, a bash script, as follows:\n\n"+
-            "<RUN>\nshell_script_here\n</RUN>\n\n"+
-            "For example, to create a new file, you can write:\n\n"+
-            "<RUN>\ncat > hello.ts << EOL\nconsole.log(\"Hello, world!\")\nEOL\n</RUN>\n\n"+
-            "And to run it, you can write:\n\n"+
-            "<RUN>\nbun hello.ts\n</RUN>\n\n"+
-            "I will show you the outputs of every command you run.\n\n"+
-            "Keep your answers brief and to the point. Don't include unsolicited details.",
+            "You are an AI assistant designed to help refactor and interact with code files, similar to ChatSH.\n\n"+
+            "1. To run bash commands (e.g., 'ls', 'cat') on my computer, include them like this:\n\n"+
+            "<RUN>\nshell_command_here\n</RUN>\n\n"+
+            "For example:\n"+
+            "<RUN>\nls && echo \"---\" && cat kind-lang.cabal\n</RUN>\n\n"+
+            "2. If I ask you to read a file or you need its contents, include the filename like this:\n\n"+
+            "<READ>filename.txt</READ>\n\n"+
+            "I’ll send you the file content afterward.\n\n"+
+            "3. If I ask you to update or refactor a file, provide the filename and the FULL updated content like this:\n\n"+
+            "<EDIT>\nfilename.txt\ncomplete_new_content_here\n</EDIT>\n\n"+
+            "Edits will be applied automatically with a single prompt, so ensure the content is correct, complete, and ready to overwrite the existing file.\n\n"+
+            "Important: When presenting code in your responses, do NOT use triple backticks (```). Write the code as plain text directly in the response.\n\n"+
+            "Keep your answers concise, relevant, and focused on simplicity. Use the tags above to trigger actions when appropriate.\n\n"+
+            "When overwriting files, always provide the complete new version of the file, never partial changes or placeholders.",
         runtime.GOOS,
     )
     model.SystemInstruction = genai.NewUserContent(genai.Text(initialPrompt))
@@ -45,8 +49,7 @@ func NewClient(apiKey string) *Client {
     return &Client{cs: cs}
 }
 
-// SendMessage sends a message to the API and streams the response in real-time.
-// It returns the full response string for further processing (e.g., command handling).
+// SendMessage envia uma mensagem para a API e transmite a resposta em tempo real.
 func (c *Client) SendMessage(input string) (string, error) {
     ctx := context.Background()
     iter := c.cs.SendMessageStream(ctx, genai.Text(input))
@@ -64,7 +67,7 @@ func (c *Client) SendMessage(input string) (string, error) {
             if cand.Content != nil {
                 for _, part := range cand.Content.Parts {
                     if text, ok := part.(genai.Text); ok {
-                        fmt.Print(string(text)) // Stream output to terminal
+                        fmt.Print(string(text))
                         fullResponse.WriteString(string(text))
                     }
                 }
@@ -74,7 +77,7 @@ func (c *Client) SendMessage(input string) (string, error) {
     return fullResponse.String(), nil
 }
 
-// AddMessage adds a message to the conversation history (e.g., command outputs).
+// AddMessage adiciona uma mensagem ao histórico da conversa.
 func (c *Client) AddMessage(role, content string) {
     var genaiRole string
     if role == "user" {
@@ -82,7 +85,7 @@ func (c *Client) AddMessage(role, content string) {
     } else if role == "assistant" {
         genaiRole = "model"
     } else {
-        panic("invalid role") // In production, consider returning an error
+        panic("invalid role")
     }
     c.cs.History = append(c.cs.History, &genai.Content{
         Parts: []genai.Part{genai.Text(content)},

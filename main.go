@@ -12,13 +12,11 @@ import (
     "strings"
 )
 
-// main is the entry point of the program.
+// main é o ponto de entrada do programa.
 func main() {
-    // Define config file path
     configDir := filepath.Join(os.Getenv("HOME"), ".config", "arisu")
     configFile := filepath.Join(configDir, "config.json")
 
-    // Load API key from JSON config
     apiKey := loadAPIKey(configFile)
     if apiKey == "" {
         fmt.Print("Enter your Gemini API key: ")
@@ -30,110 +28,107 @@ func main() {
             fmt.Println("Error: No API key provided.")
             return
         }
-        // Save the entered key to JSON config
         saveAPIKey(configFile, apiKey)
     }
 
-    // Initialize Gemini client
     client := NewClient(apiKey)
 
-    // Handle command-line arguments
     args := os.Args[1:]
     if len(args) > 0 {
-        // Single prompt mode
         prompt := strings.Join(args, " ")
         response, err := client.SendMessage(prompt)
         if err != nil {
             fmt.Printf("Error: %v\n", err)
             return
         }
-        handleCommands(response, client)
+        handleResponse(response, client)
         return
     }
 
-    // Interactive chat mode
     fmt.Println("For multi-line input, end with a blank line.")
     scanner := bufio.NewScanner(os.Stdin)
     for {
         fmt.Print("$ ")
         var inputLines []string
 
-        // Collect lines until a blank line is entered
         for {
             if !scanner.Scan() {
-                return // Exit on EOF or error
+                return
             }
             line := scanner.Text()
 
-            // Check for exit condition
             if line == "exit" {
                 fmt.Println("Goodbye!")
                 return
             }
 
-            // Blank line signals the end of input
             if line == "" {
                 break
             }
 
-            // Add the line to the buffer
             inputLines = append(inputLines, line)
         }
 
-        // Skip if no input was provided
         if len(inputLines) == 0 {
             continue
         }
 
-        // Combine all lines into a single string with newlines
         input := strings.Join(inputLines, "\n")
-
-        // Send the input to the API
         response, err := client.SendMessage(input)
         if err != nil {
             fmt.Printf("Error: %v\n", err)
             continue
         }
-        handleCommands(response, client)
+        handleResponse(response, client)
     }
 }
 
-// handleCommands detects and executes bash commands in <RUN> tags.
-func handleCommands(response string, client *Client) {
+// handleResponse processa a resposta da IA, lidando com comandos e edições automáticas.
+func handleResponse(response string, client *Client) {
+    // Trata comandos <RUN>
     commands := extractCommands(response)
     for _, command := range commands {
-        fmt.Printf("Detected command: %s\n", command)
-        fmt.Print("Execute? (y/n): ")
+        var outputBuf bytes.Buffer
+        cmd := exec.Command("bash", "-c", command)
+        cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
+        cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
+        err := cmd.Run()
+        if err != nil {
+            fmt.Printf("Command failed with error: %v\n", err)
+        }
+        output := outputBuf.String()
+        if output != "" {
+            client.AddMessage("user", "Command output:\n"+output)
+        }
+    }
 
-        reader := bufio.NewReader(os.Stdin)
-        confirm, _ := reader.ReadString('\n')
-        confirm = strings.TrimSpace(confirm)
-
-        if confirm == "y" {
-            // Buffer to capture the command output
-            var outputBuf bytes.Buffer
-            // Set up the command
-            cmd := exec.Command("bash", "-c", command)
-            // Stream stdout to both terminal and buffer
-            cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
-            // Stream stderr to both terminal and buffer
-            cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
-            // Run the command
-            err := cmd.Run()
-            if err != nil {
-                fmt.Printf("Command failed with error: %v\n", err)
-            }
-            // Retrieve the captured output
-            output := outputBuf.String()
-            // Add output to conversation context
-            client.AddMessage("user", "Command output: "+output)
+    // Trata leituras <READ> (apenas para referência, não implementado no chatlog diretamente)
+    readRequests := extractReadRequests(response)
+    for _, filename := range readRequests {
+        content, err := os.ReadFile(filename)
+        if err != nil {
+            fmt.Printf("Erro ao ler %s: %v\n", filename, err)
+            client.AddMessage("user", fmt.Sprintf("Erro ao ler %s: %v", filename, err))
         } else {
-            fmt.Println("Command not executed.")
+            fmt.Printf("Conteúdo de %s:\n%s\n", filename, string(content))
+            client.AddMessage("user", fmt.Sprintf("Conteúdo de %s:\n%s", filename, string(content)))
+        }
+    }
+
+    // Trata edições <EDIT> automaticamente
+    editRequests := extractEditRequests(response)
+    for _, req := range editRequests {
+        if err := os.WriteFile(req.Filename, []byte(req.Content), 0644); err != nil {
+            fmt.Printf("Erro ao editar %s: %v\n", req.Filename, err)
+            client.AddMessage("user", fmt.Sprintf("Erro ao editar %s: %v", req.Filename, err))
+        } else {
+            fmt.Printf("Arquivo %s editado com sucesso.\n", req.Filename)
+            client.AddMessage("user", fmt.Sprintf("Arquivo %s editado:\n%s", req.Filename, req.Content))
         }
     }
 }
 
-// extractCommands extracts bash commands between <RUN> and </RUN> tags.
+// extractCommands extrai comandos bash entre <RUN> e </RUN>.
 func extractCommands(response string) []string {
     var commands []string
     start := 0
@@ -155,22 +150,79 @@ func extractCommands(response string) []string {
     return commands
 }
 
-// loadAPIKey reads the API key from the JSON config file.
+// extractReadRequests extrai pedidos de leitura entre <READ> e </READ>.
+func extractReadRequests(response string) []string {
+    var filenames []string
+    start := 0
+    for {
+        startIdx := strings.Index(response[start:], "<READ>")
+        if startIdx == -1 {
+            break
+        }
+        startIdx += start
+        endIdx := strings.Index(response[startIdx:], "</READ>")
+        if endIdx == -1 {
+            break
+        }
+        endIdx += startIdx
+        filename := strings.TrimSpace(response[startIdx+6 : endIdx])
+        filenames = append(filenames, filename)
+        start = endIdx + 7
+    }
+    return filenames
+}
+
+// EditRequest representa um pedido de edição com nome do arquivo e conteúdo.
+type EditRequest struct {
+    Filename string
+    Content  string
+}
+
+// extractEditRequests extrai pedidos de edição entre <EDIT> e </EDIT>.
+func extractEditRequests(response string) []EditRequest {
+    var requests []EditRequest
+    start := 0
+    for {
+        startIdx := strings.Index(response[start:], "<EDIT>")
+        if startIdx == -1 {
+            break
+        }
+        startIdx += start
+        endIdx := strings.Index(response[startIdx:], "</EDIT>")
+        if endIdx == -1 {
+            break
+        }
+        endIdx += startIdx
+        content := strings.TrimSpace(response[startIdx+6 : endIdx])
+        lines := strings.SplitN(content, "\n", 2)
+        if len(lines) < 2 {
+            start = endIdx + 7
+            continue
+        }
+        filename := strings.TrimSpace(lines[0])
+        editContent := strings.TrimSpace(lines[1])
+        requests = append(requests, EditRequest{Filename: filename, Content: editContent})
+        start = endIdx + 7
+    }
+    return requests
+}
+
+// loadAPIKey lê a chave API do arquivo de configuração JSON.
 func loadAPIKey(configFile string) string {
     data, err := os.ReadFile(configFile)
     if err != nil {
-        return "" // File doesn’t exist or can’t be read
+        return ""
     }
     var config struct {
         GeminiAPIKey string `json:"gemini_api_key"`
     }
     if err := json.Unmarshal(data, &config); err != nil {
-        return "" // Invalid JSON
+        return ""
     }
     return config.GeminiAPIKey
 }
 
-// saveAPIKey writes the API key to the JSON config file.
+// saveAPIKey escreve a chave API no arquivo de configuração JSON.
 func saveAPIKey(configFile, apiKey string) {
     config := struct {
         GeminiAPIKey string `json:"gemini_api_key"`
