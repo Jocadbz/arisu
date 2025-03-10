@@ -91,7 +91,7 @@ func main() {
     scanner := bufio.NewScanner(os.Stdin)
     lastLoggedIndex := 0 // Track the last logged message index
     for {
-        fmt.Print("$ ")
+        fmt.Print("λ ")
         var inputLines []string
 
         for {
