@@ -10,13 +10,63 @@ import (
     "os/exec"
     "path/filepath"
     "strings"
-    "time" // Added for timestamp generation
+    "time"
 
-    "github.com/google/generative-ai-go/genai" // Required for genai.Content type
+    //"github.com/google/generative-ai-go/genai"
 )
 
-// logMessages appends new messages from the chat history to the log file starting from startIdx.
-func logMessages(logFile string, history []*genai.Content, startIdx int) error {
+// Message represents a single message in the conversation history.
+type Message struct {
+    Role    string
+    Content string
+}
+
+// AIClient defines the interface for AI clients (Gemini and Grok).
+type AIClient interface {
+    SendMessage(input string) (string, error)
+    AddMessage(role, content string)
+    GetHistory() []Message
+}
+
+// Config holds the configuration including the selected model and API keys.
+type Config struct {
+    SelectedModel string            `json:"selected_model"`
+    APIKeys       map[string]string `json:"api_keys"`
+}
+
+// loadConfig loads the configuration from the config file.
+func loadConfig(configFile string) (*Config, error) {
+    data, err := os.ReadFile(configFile)
+    if err != nil {
+        if os.IsNotExist(err) {
+            return &Config{APIKeys: make(map[string]string)}, nil
+        }
+        return nil, err
+    }
+    var config Config
+    if err := json.Unmarshal(data, &config); err != nil {
+        return nil, err
+    }
+    if config.APIKeys == nil {
+        config.APIKeys = make(map[string]string)
+    }
+    return &config, nil
+}
+
+// saveConfig saves the configuration to the config file.
+func saveConfig(configFile string, config *Config) error {
+    data, err := json.MarshalIndent(config, "", "  ")
+    if err != nil {
+        return err
+    }
+    if err := os.MkdirAll(filepath.Dir(configFile), 0700); err != nil {
+        return err
+    }
+    return os.WriteFile(configFile, data, 0600)
+}
+
+// logMessages appends new messages from the chat history to the log file.
+func logMessages(logFile string, history []Message, startIdx int) error {
     f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
     if err != nil {
         return err
@@ -26,14 +76,7 @@ func logMessages(logFile string, history []*genai.Content, startIdx int) error {
     for i := startIdx; i < len(history); i++ {
         msg := history[i]
         timestamp := time.Now().Format("2006-01-02 15:04:05")
-        role := msg.Role
-        content := ""
-        for _, part := range msg.Parts {
-            if text, ok := part.(genai.Text); ok {
-                content += string(text)
-            }
-        }
-        logEntry := fmt.Sprintf("[%s] %s: %s\n", timestamp, role, content)
+        logEntry := fmt.Sprintf("[%s] %s: %s\n", timestamp, msg.Role, msg.Content)
         if _, err := f.WriteString(logEntry); err != nil {
             return err
         }
@@ -41,7 +84,6 @@ func logMessages(logFile string, history []*genai.Content, startIdx int) error {
     return nil
 }
 
-// main é o ponto de entrada do programa.
 func main() {
     configDir := filepath.Join(os.Getenv("HOME"), ".config", "arisu")
     configFile := filepath.Join(configDir, "config.json")
@@ -52,12 +94,43 @@ func main() {
         fmt.Printf("Error creating log directory: %v\n", err)
         return
     }
-    timestamp := time.Now().Format("20060102_150405") // Format: YYYYMMDD_HHMMSS
+    timestamp := time.Now().Format("20060102_150405")
     logFile := filepath.Join(logDir, "conversation_"+timestamp+".log")
 
-    apiKey := loadAPIKey(configFile)
-    if apiKey == "" {
-        fmt.Print("Enter your Gemini API key: ")
+    config, err := loadConfig(configFile)
+    if err != nil {
+        fmt.Printf("Error loading config: %v\n", err)
+        return
+    }
+
+    args := os.Args[1:]
+    if len(args) > 0 && args[0] == "--setmodel" {
+        if len(args) < 2 {
+            fmt.Println("Usage: arisu --setmodel <model>")
+            return
+        }
+        model := args[1]
+        if model != "gemini" && model != "grok" {
+            fmt.Println("Invalid model. Choose 'gemini' or 'grok'.")
+            return
+        }
+        config.SelectedModel = model
+        if err := saveConfig(configFile, config); err != nil {
+            fmt.Printf("Error saving config: %v\n", err)
+            return
+        }
+        fmt.Printf("Selected model set to %s\n", model)
+        return
+    }
+
+    // Default to Gemini if no model is selected
+    if config.SelectedModel == "" {
+        config.SelectedModel = "gemini"
+    }
+
+    apiKey, ok := config.APIKeys[config.SelectedModel]
+    if !ok || apiKey == "" {
+        fmt.Printf("Enter your %s API key: ", config.SelectedModel)
         scanner := bufio.NewScanner(os.Stdin)
         if scanner.Scan() {
             apiKey = scanner.Text()
@@ -66,12 +139,23 @@ func main() {
             fmt.Println("Error: No API key provided.")
             return
         }
-        saveAPIKey(configFile, apiKey)
+        config.APIKeys[config.SelectedModel] = apiKey
+        if err := saveConfig(configFile, config); err != nil {
+            fmt.Printf("Error saving config: %v\n", err)
+        }
     }
 
-    client := NewClient(apiKey)
+    var client AIClient
+    switch config.SelectedModel {
+    case "gemini":
+        client = NewClient(apiKey)
+    case "grok":
+        client = NewGrokClient(apiKey)
+    default:
+        fmt.Println("Invalid selected model in config.")
+        return
+    }
 
-    args := os.Args[1:]
     if len(args) > 0 {
         prompt := strings.Join(args, " ")
         response, err := client.SendMessage(prompt)
@@ -80,8 +164,7 @@ func main() {
             return
         }
         handleResponse(response, client)
-        // Log the entire conversation history for single command
-        if err := logMessages(logFile, client.cs.History, 0); err != nil {
+        if err := logMessages(logFile, client.GetHistory(), 0); err != nil {
             fmt.Printf("Error logging messages: %v\n", err)
         }
         return
@@ -89,7 +172,7 @@ func main() {
 
     fmt.Println("For multi-line input, end with a blank line.")
     scanner := bufio.NewScanner(os.Stdin)
-    lastLoggedIndex := 0 // Track the last logged message index
+    lastLoggedIndex := 0
     for {
         fmt.Print("λ ")
         var inputLines []string
@@ -123,17 +206,15 @@ func main() {
             continue
         }
         handleResponse(response, client)
-        // Log new messages added to the history
-        if err := logMessages(logFile, client.cs.History, lastLoggedIndex); err != nil {
+        if err := logMessages(logFile, client.GetHistory(), lastLoggedIndex); err != nil {
             fmt.Printf("Error logging messages: %v\n", err)
         }
-        lastLoggedIndex = len(client.cs.History) // Update the last logged index
+        lastLoggedIndex = len(client.GetHistory())
     }
 }
 
-// handleResponse processa a resposta da IA, lidando com comandos e edições automáticas.
-func handleResponse(response string, client *Client) {
-    // Trata comandos <RUN>
+// handleResponse processes the AI's response, handling commands and edits.
+func handleResponse(response string, client AIClient) {
     commands := extractCommands(response)
     for _, command := range commands {
         var outputBuf bytes.Buffer
@@ -150,7 +231,6 @@ func handleResponse(response string, client *Client) {
         }
     }
 
-    // Trata leituras <READ> (apenas para referência, não implementado no chatlog diretamente)
     readRequests := extractReadRequests(response)
     for _, filename := range readRequests {
         content, err := os.ReadFile(filename)
@@ -163,7 +243,6 @@ func handleResponse(response string, client *Client) {
         }
     }
 
-    // Trata edições <EDIT> automaticamente
     editRequests := extractEditRequests(response)
     for _, req := range editRequests {
         if err := os.WriteFile(req.Filename, []byte(req.Content), 0644); err != nil {
@@ -176,7 +255,7 @@ func handleResponse(response string, client *Client) {
     }
 }
 
-// extractCommands extrai comandos bash entre <RUN> e </RUN>.
+// extractCommands extracts bash commands between <RUN> and </RUN>.
 func extractCommands(response string) []string {
     var commands []string
     start := 0
@@ -198,7 +277,7 @@ func extractCommands(response string) []string {
     return commands
 }
 
-// extractReadRequests extrai pedidos de leitura entre <READ> e </READ>.
+// extractReadRequests extracts read requests between <READ> and </READ>.
 func extractReadRequests(response string) []string {
     var filenames []string
     start := 0
@@ -220,13 +299,13 @@ func extractReadRequests(response string) []string {
     return filenames
 }
 
-// EditRequest representa um pedido de edição com nome do arquivo e conteúdo.
+// EditRequest represents an edit request with filename and content.
 type EditRequest struct {
     Filename string
     Content  string
 }
 
-// extractEditRequests extrai pedidos de edição entre <EDIT> e </EDIT>.
+// extractEditRequests extracts edit requests between <EDIT> and </EDIT>.
 func extractEditRequests(response string) []EditRequest {
     var requests []EditRequest
     start := 0
@@ -253,40 +332,4 @@ func extractEditRequests(response string) []EditRequest {
         start = endIdx + 7
     }
     return requests
-}
-
-// loadAPIKey lê a chave API do arquivo de configuração JSON.
-func loadAPIKey(configFile string) string {
-    data, err := os.ReadFile(configFile)
-    if err != nil {
-        return ""
-    }
-    var config struct {
-        GeminiAPIKey string `json:"gemini_api_key"`
-    }
-    if err := json.Unmarshal(data, &config); err != nil {
-        return ""
-    }
-    return config.GeminiAPIKey
-}
-
-// saveAPIKey escreve a chave API no arquivo de configuração JSON.
-func saveAPIKey(configFile, apiKey string) {
-    config := struct {
-        GeminiAPIKey string `json:"gemini_api_key"`
-    }{
-        GeminiAPIKey: apiKey,
-    }
-    data, err := json.MarshalIndent(config, "", "  ")
-    if err != nil {
-        fmt.Printf("Error encoding config: %v\n", err)
-        return
-    }
-    if err := os.MkdirAll(filepath.Dir(configFile), 0700); err != nil {
-        fmt.Printf("Error creating config directory: %v\n", err)
-        return
-    }
-    if err := os.WriteFile(configFile, data, 0600); err != nil {
-        fmt.Printf("Error saving config: %v\n", err)
-    }
 }

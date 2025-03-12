@@ -11,12 +11,12 @@ import (
     "google.golang.org/api/option"
 )
 
-// Client representa um cliente para interagir com a API de IA generativa.
+// Client represents a client for interacting with the Gemini API.
 type Client struct {
     cs *genai.ChatSession
 }
 
-// NewClient inicializa um novo Client com a chave API fornecida.
+// NewClient initializes a new Gemini client with the provided API key.
 func NewClient(apiKey string) *Client {
     ctx := context.Background()
     genaiClient, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
@@ -49,7 +49,7 @@ func NewClient(apiKey string) *Client {
     return &Client{cs: cs}
 }
 
-// SendMessage envia uma mensagem para a API e transmite a resposta em tempo real.
+// SendMessage sends a message to the Gemini API and streams the response.
 func (c *Client) SendMessage(input string) (string, error) {
     ctx := context.Background()
     iter := c.cs.SendMessageStream(ctx, genai.Text(input))
@@ -77,7 +77,7 @@ func (c *Client) SendMessage(input string) (string, error) {
     return fullResponse.String(), nil
 }
 
-// AddMessage adiciona uma mensagem ao histórico da conversa.
+// AddMessage adds a message to the conversation history.
 func (c *Client) AddMessage(role, content string) {
     var genaiRole string
     if role == "user" {
@@ -91,4 +91,20 @@ func (c *Client) AddMessage(role, content string) {
         Parts: []genai.Part{genai.Text(content)},
         Role:  genaiRole,
     })
+}
+
+// GetHistory returns the conversation history as a slice of Messages.
+func (c *Client) GetHistory() []Message {
+    var history []Message
+    for _, msg := range c.cs.History {
+        role := msg.Role
+        content := ""
+        for _, part := range msg.Parts {
+            if text, ok := part.(genai.Text); ok {
+                content += string(text)
+            }
+        }
+        history = append(history, Message{Role: role, Content: content})
+    }
+    return history
 }
