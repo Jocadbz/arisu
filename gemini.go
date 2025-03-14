@@ -23,7 +23,7 @@ func NewClient(apiKey string) *Client {
     if err != nil {
         panic(err)
     }
-    model := genaiClient.GenerativeModel("gemini-1.5-flash")
+    model := genaiClient.GenerativeModel("gemini-2.0-flash")
 
     initialPrompt := fmt.Sprintf(
         "This conversation is running inside a terminal session on %s.\n\n"+
