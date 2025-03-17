@@ -11,8 +11,6 @@ import (
     "path/filepath"
     "strings"
     "time"
-
-    //"github.com/google/generative-ai-go/genai"
 )
 
 // Message represents a single message in the conversation history.
@@ -28,10 +26,12 @@ type AIClient interface {
     GetHistory() []Message
 }
 
-// Config holds the configuration including the selected model and API keys.
+// Config holds the configuration including the selected model, API keys, and auto options.
 type Config struct {
     SelectedModel string            `json:"selected_model"`
     APIKeys       map[string]string `json:"api_keys"`
+    AutoEdit      bool              `json:"auto_edit"`
+    AutoRun       bool              `json:"auto_run"`
 }
 
 // loadConfig loads the configuration from the config file.
@@ -104,23 +104,50 @@ func main() {
     }
 
     args := os.Args[1:]
-    if len(args) > 0 && args[0] == "--setmodel" {
-        if len(args) < 2 {
-            fmt.Println("Usage: arisu --setmodel <model>")
+    if len(args) > 0 {
+        switch args[0] {
+        case "--setmodel":
+            if len(args) < 2 {
+                fmt.Println("Usage: arisu --setmodel <model>")
+                return
+            }
+            model := args[1]
+            if model != "gemini" && model != "grok" {
+                fmt.Println("Invalid model. Choose 'gemini' or 'grok'.")
+                return
+            }
+            config.SelectedModel = model
+            if err := saveConfig(configFile, config); err != nil {
+                fmt.Printf("Error saving config: %v\n", err)
+                return
+            }
+            fmt.Printf("Selected model set to %s\n", model)
+            return
+        case "--auto-edit":
+            if len(args) < 2 || (args[1] != "true" && args[1] != "false") {
+                fmt.Println("Usage: arisu --auto-edit true/false")
+                return
+            }
+            config.AutoEdit = args[1] == "true"
+            if err := saveConfig(configFile, config); err != nil {
+                fmt.Printf("Error saving config: %v\n", err)
+                return
+            }
+            fmt.Printf("Auto-edit set to %v\n", config.AutoEdit)
+            return
+        case "--auto-run":
+            if len(args) < 2 || (args[1] != "true" && args[1] != "false") {
+                fmt.Println("Usage: arisu --auto-run true/false")
+                return
+            }
+            config.AutoRun = args[1] == "true"
+            if err := saveConfig(configFile, config); err != nil {
+                fmt.Printf("Error saving config: %v\n", err)
+                return
+            }
+            fmt.Printf("Auto-run set to %v\n", config.AutoRun)
             return
         }
-        model := args[1]
-        if model != "gemini" && model != "grok" {
-            fmt.Println("Invalid model. Choose 'gemini' or 'grok'.")
-            return
-        }
-        config.SelectedModel = model
-        if err := saveConfig(configFile, config); err != nil {
-            fmt.Printf("Error saving config: %v\n", err)
-            return
-        }
-        fmt.Printf("Selected model set to %s\n", model)
-        return
     }
 
     // Default to Gemini if no model is selected
@@ -163,7 +190,7 @@ func main() {
             fmt.Printf("Error: %v\n", err)
             return
         }
-        handleResponse(response, client)
+        handleResponse(response, client, config)
         if err := logMessages(logFile, client.GetHistory(), 0); err != nil {
             fmt.Printf("Error logging messages: %v\n", err)
         }
@@ -205,7 +232,7 @@ func main() {
             fmt.Printf("Error: %v\n", err)
             continue
         }
-        handleResponse(response, client)
+        handleResponse(response, client, config)
         if err := logMessages(logFile, client.GetHistory(), lastLoggedIndex); err != nil {
             fmt.Printf("Error logging messages: %v\n", err)
         }
@@ -213,25 +240,58 @@ func main() {
     }
 }
 
-// handleResponse processes the AI's response, handling commands and edits.
-func handleResponse(response string, client AIClient) {
+// confirmAction prompts the user for confirmation and returns true if confirmed.
+func confirmAction(prompt string) bool {
+    fmt.Printf("%s (y/n): ", prompt)
+    scanner := bufio.NewScanner(os.Stdin)
+    if scanner.Scan() {
+        return strings.ToLower(strings.TrimSpace(scanner.Text())) == "y"
+    }
+    return false
+}
+
+// handleResponse processes the AI's response, handling commands and edits with confirmation.
+func handleResponse(response string, client AIClient, config *Config) {
+    editRequests := extractEditRequests(response)
     commands := extractCommands(response)
-    for _, command := range commands {
-        var outputBuf bytes.Buffer
-        cmd := exec.Command("bash", "-c", command)
-        cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
-        cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
-        err := cmd.Run()
-        if err != nil {
-            fmt.Printf("Command failed with error: %v\n", err)
-        }
-        output := outputBuf.String()
-        if output != "" {
-            client.AddMessage("user", "Command output:\n"+output)
+    readRequests := extractReadRequests(response)
+
+    // Handle file edits first
+    for _, req := range editRequests {
+        if config.AutoEdit || confirmAction(fmt.Sprintf("Apply edit to %s?", req.Filename)) {
+            if err := os.WriteFile(req.Filename, []byte(req.Content), 0644); err != nil {
+                fmt.Printf("Erro ao editar %s: %v\n", req.Filename, err)
+                client.AddMessage("user", fmt.Sprintf("Erro ao editar %s: %v", req.Filename, err))
+            } else {
+                fmt.Printf("Arquivo %s editado com sucesso.\n", req.Filename)
+                client.AddMessage("user", fmt.Sprintf("Arquivo %s editado:\n%s", req.Filename, req.Content))
+            }
+        } else {
+            fmt.Printf("Edit to %s skipped.\n", req.Filename)
         }
     }
 
-    readRequests := extractReadRequests(response)
+    // Then handle commands
+    for _, command := range commands {
+        if config.AutoRun || confirmAction(fmt.Sprintf("Run command: %s?", command)) {
+            var outputBuf bytes.Buffer
+            cmd := exec.Command("bash", "-c", command)
+            cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
+            cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
+            err := cmd.Run()
+            if err != nil {
+                fmt.Printf("Command failed with error: %v\n", err)
+            }
+            output := outputBuf.String()
+            if output != "" {
+                client.AddMessage("user", "Command output:\n"+output)
+            }
+        } else {
+            fmt.Printf("Command skipped: %s\n", command)
+        }
+    }
+
+    // Handle read requests
     for _, filename := range readRequests {
         content, err := os.ReadFile(filename)
         if err != nil {
@@ -240,17 +300,6 @@ func handleResponse(response string, client AIClient) {
         } else {
             fmt.Printf("Conteúdo de %s:\n%s\n", filename, string(content))
             client.AddMessage("user", fmt.Sprintf("Conteúdo de %s:\n%s", filename, string(content)))
-        }
-    }
-
-    editRequests := extractEditRequests(response)
-    for _, req := range editRequests {
-        if err := os.WriteFile(req.Filename, []byte(req.Content), 0644); err != nil {
-            fmt.Printf("Erro ao editar %s: %v\n", req.Filename, err)
-            client.AddMessage("user", fmt.Sprintf("Erro ao editar %s: %v", req.Filename, err))
-        } else {
-            fmt.Printf("Arquivo %s editado com sucesso.\n", req.Filename)
-            client.AddMessage("user", fmt.Sprintf("Arquivo %s editado:\n%s", req.Filename, req.Content))
         }
     }
 }

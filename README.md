@@ -1,9 +1,22 @@
 # Arisu
 
-My personal script for running gemini on the terminal.
+Seamless AI coding and editing on the terminal
 
-There are safer and better alternatives, so please don't do use this.
+Prompt and idea borrowed from Victor Taelin's AI-scripts.
 
-Prompt borrowed from Victor Taelin's AI-scripts.
+## Usage
 
-Everything here is public domain.
+### Setting different models
+```sh
+arisu --setmodel gemini/grok
+```
+
+### Activate autorun and autoedit
+
+By default, Arisu asks for your confirmation before editing files and running commands.
+If you want to modify this behavior, use the following flags
+
+```sh
+arisu --auto-edit true/false
+arisu --auto-run true/false
+```
