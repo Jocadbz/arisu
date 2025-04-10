@@ -50,6 +50,10 @@ func loadConfig(configFile string) (*Config, error) {
     if config.APIKeys == nil {
         config.APIKeys = make(map[string]string)
     }
+    // Map "grok" to "grok-2-latest" for backward compatibility
+    if config.SelectedModel == "grok" {
+        config.SelectedModel = "grok-2-latest"
+    }
     return &config, nil
 }
 
@@ -112,9 +116,8 @@ func main() {
                 return
             }
             model := args[1]
-            if model != "gemini" && model != "grok" {
-                fmt.Println("Invalid model. Choose 'gemini' or 'grok'.")
-                return
+            if model == "grok" {
+                model = "grok-2-latest"
             }
             config.SelectedModel = model
             if err := saveConfig(configFile, config); err != nil {
@@ -155,9 +158,19 @@ func main() {
         config.SelectedModel = "gemini"
     }
 
-    apiKey, ok := config.APIKeys[config.SelectedModel]
+    var provider string
+    if config.SelectedModel == "gemini" {
+        provider = "gemini"
+    } else if strings.HasPrefix(config.SelectedModel, "grok-") {
+        provider = "grok"
+    } else {
+        fmt.Println("Invalid selected model in config.")
+        return
+    }
+
+    apiKey, ok := config.APIKeys[provider]
     if !ok || apiKey == "" {
-        fmt.Printf("Enter your %s API key: ", config.SelectedModel)
+        fmt.Printf("Enter your %s API key: ", provider)
         scanner := bufio.NewScanner(os.Stdin)
         if scanner.Scan() {
             apiKey = scanner.Text()
@@ -166,21 +179,17 @@ func main() {
             fmt.Println("Error: No API key provided.")
             return
         }
-        config.APIKeys[config.SelectedModel] = apiKey
+        config.APIKeys[provider] = apiKey
         if err := saveConfig(configFile, config); err != nil {
             fmt.Printf("Error saving config: %v\n", err)
         }
     }
 
     var client AIClient
-    switch config.SelectedModel {
-    case "gemini":
+    if provider == "gemini" {
         client = NewClient(apiKey)
-    case "grok":
-        client = NewGrokClient(apiKey)
-    default:
-        fmt.Println("Invalid selected model in config.")
-        return
+    } else if provider == "grok" {
+        client = NewGrokClient(apiKey, config.SelectedModel)
     }
 
     if len(args) > 0 {

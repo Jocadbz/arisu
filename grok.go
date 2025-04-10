@@ -14,11 +14,12 @@ import (
 // GrokClient represents a client for interacting with the Grok API.
 type GrokClient struct {
     apiKey  string
+    model   string
     history []Message
 }
 
-// NewGrokClient initializes a new Grok client with the provided API key.
-func NewGrokClient(apiKey string) *GrokClient {
+// NewGrokClient initializes a new Grok client with the provided API key and model.
+func NewGrokClient(apiKey, model string) *GrokClient {
     initialPrompt := fmt.Sprintf(
         "This conversation is running inside a terminal session on %s.\n\n"+
             "You are an AI assistant designed to help refactor and interact with code files, similar to ChatSH.\n\n"+
@@ -38,7 +39,7 @@ func NewGrokClient(apiKey string) *GrokClient {
         runtime.GOOS,
     )
     history := []Message{{Role: "system", Content: initialPrompt}}
-    return &GrokClient{apiKey: apiKey, history: history}
+    return &GrokClient{apiKey: apiKey, model: model, history: history}
 }
 
 // SendMessage sends a message to the Grok API and streams the response.
@@ -51,7 +52,7 @@ func (c *GrokClient) SendMessage(input string) (string, error) {
     }
     payload := map[string]interface{}{
         "messages":    messages,
-        "model":       "grok-2-latest",
+        "model":       c.model,
         "stream":      true,
         "temperature": 0,
     }
