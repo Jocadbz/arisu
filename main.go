@@ -13,20 +13,20 @@ import (
     "time"
 )
 
-// Message represents a single message in the conversation history.
+// Message representa uma mensagem no histórico da conversa.
 type Message struct {
     Role    string
     Content string
 }
 
-// AIClient defines the interface for AI clients (Gemini and Grok).
+// AIClient define a interface para clientes de IA (Gemini, Grok, OpenAI).
 type AIClient interface {
     SendMessage(input string) (string, error)
     AddMessage(role, content string)
     GetHistory() []Message
 }
 
-// Config holds the configuration including the selected model, API keys, and auto options.
+// Config contém a configuração, incluindo o modelo selecionado, chaves API e opções automáticas.
 type Config struct {
     SelectedModel string            `json:"selected_model"`
     APIKeys       map[string]string `json:"api_keys"`
@@ -34,7 +34,7 @@ type Config struct {
     AutoRun       bool              `json:"auto_run"`
 }
 
-// loadConfig loads the configuration from the config file.
+// loadConfig carrega a configuração do arquivo de configuração.
 func loadConfig(configFile string) (*Config, error) {
     data, err := os.ReadFile(configFile)
     if err != nil {
@@ -50,14 +50,14 @@ func loadConfig(configFile string) (*Config, error) {
     if config.APIKeys == nil {
         config.APIKeys = make(map[string]string)
     }
-    // Map "grok" to "grok-2-latest" for backward compatibility
+    // Mapeia "grok" para "grok-2-latest" por compatibilidade
     if config.SelectedModel == "grok" {
         config.SelectedModel = "grok-2-latest"
     }
     return &config, nil
 }
 
-// saveConfig saves the configuration to the config file.
+// saveConfig salva a configuração no arquivo de configuração.
 func saveConfig(configFile string, config *Config) error {
     data, err := json.MarshalIndent(config, "", "  ")
     if err != nil {
@@ -69,7 +69,7 @@ func saveConfig(configFile string, config *Config) error {
     return os.WriteFile(configFile, data, 0600)
 }
 
-// logMessages appends new messages from the chat history to the log file.
+// logMessages adiciona novas mensagens do histórico ao arquivo de log.
 func logMessages(logFile string, history []Message, startIdx int) error {
     f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
     if err != nil {
@@ -92,7 +92,7 @@ func main() {
     configDir := filepath.Join(os.Getenv("HOME"), ".config", "arisu")
     configFile := filepath.Join(configDir, "config.json")
 
-    // Set up log directory and file
+    // Configura o diretório e arquivo de log
     logDir := filepath.Join(configDir, "log")
     if err := os.MkdirAll(logDir, 0700); err != nil {
         fmt.Printf("Error creating log directory: %v\n", err)
@@ -153,9 +153,18 @@ func main() {
         }
     }
 
-    // Default to Gemini if no model is selected
+    // Define Gemini como padrão se nenhum modelo for selecionado
     if config.SelectedModel == "" {
         config.SelectedModel = "gemini"
+    }
+
+    openaiModels := []string{
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "o3",
+        "gpt-3.5-turbo",
     }
 
     var provider string
@@ -163,6 +172,8 @@ func main() {
         provider = "gemini"
     } else if strings.HasPrefix(config.SelectedModel, "grok-") {
         provider = "grok"
+    } else if contains(openaiModels, config.SelectedModel) {
+        provider = "openai"
     } else {
         fmt.Println("Invalid selected model in config.")
         return
@@ -190,6 +201,8 @@ func main() {
         client = NewClient(apiKey)
     } else if provider == "grok" {
         client = NewGrokClient(apiKey, config.SelectedModel)
+    } else if provider == "openai" {
+        client = NewOpenAIClient(apiKey, config.SelectedModel)
     }
 
     if len(args) > 0 {
@@ -249,7 +262,17 @@ func main() {
     }
 }
 
-// confirmAction prompts the user for confirmation and returns true if confirmed.
+// contains verifica se uma slice contém uma string específica.
+func contains(slice []string, item string) bool {
+    for _, s := range slice {
+        if s == item {
+            return true
+        }
+    }
+    return false
+}
+
+// confirmAction solicita confirmação do usuário e retorna true se confirmado.
 func confirmAction(prompt string) bool {
     fmt.Printf("%s (y/n): ", prompt)
     scanner := bufio.NewScanner(os.Stdin)
@@ -259,13 +282,13 @@ func confirmAction(prompt string) bool {
     return false
 }
 
-// handleResponse processes the AI's response, handling commands and edits with confirmation.
+// handleResponse processa a resposta da IA, lidando com comandos e edições com confirmação.
 func handleResponse(response string, client AIClient, config *Config) {
     editRequests := extractEditRequests(response)
     commands := extractCommands(response)
     readRequests := extractReadRequests(response)
 
-    // Handle file edits first
+    // Lida com edições de arquivos primeiro
     for _, req := range editRequests {
         if config.AutoEdit || confirmAction(fmt.Sprintf("Apply edit to %s?", req.Filename)) {
             if err := os.WriteFile(req.Filename, []byte(req.Content), 0644); err != nil {
@@ -280,7 +303,7 @@ func handleResponse(response string, client AIClient, config *Config) {
         }
     }
 
-    // Then handle commands
+    // Em seguida, lida com comandos
     for _, command := range commands {
         if config.AutoRun || confirmAction(fmt.Sprintf("Run command: %s?", command)) {
             var outputBuf bytes.Buffer
@@ -300,7 +323,7 @@ func handleResponse(response string, client AIClient, config *Config) {
         }
     }
 
-    // Handle read requests
+    // Lida com solicitações de leitura
     for _, filename := range readRequests {
         content, err := os.ReadFile(filename)
         if err != nil {
@@ -313,7 +336,7 @@ func handleResponse(response string, client AIClient, config *Config) {
     }
 }
 
-// extractCommands extracts bash commands between <RUN> and </RUN>.
+// extractCommands extrai comandos bash entre <RUN> e </RUN>.
 func extractCommands(response string) []string {
     var commands []string
     start := 0
@@ -335,7 +358,7 @@ func extractCommands(response string) []string {
     return commands
 }
 
-// extractReadRequests extracts read requests between <READ> and </READ>.
+// extractReadRequests extrai solicitações de leitura entre <READ> e </READ>.
 func extractReadRequests(response string) []string {
     var filenames []string
     start := 0
@@ -357,13 +380,13 @@ func extractReadRequests(response string) []string {
     return filenames
 }
 
-// EditRequest represents an edit request with filename and content.
+// EditRequest representa uma solicitação de edição com nome do arquivo e conteúdo.
 type EditRequest struct {
     Filename string
     Content  string
 }
 
-// extractEditRequests extracts edit requests between <EDIT> and </EDIT>.
+// extractEditRequests extrai solicitações de edição entre <EDIT> e </EDIT>.
 func extractEditRequests(response string) []EditRequest {
     var requests []EditRequest
     start := 0
