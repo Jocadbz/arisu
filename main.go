@@ -1,7 +1,7 @@
 package main
 
 import (
-    "bufio"
+    "bufio" // Added to resolve undefined bufio errors
     "bytes"
     "encoding/json"
     "fmt"
@@ -11,22 +11,24 @@ import (
     "path/filepath"
     "strings"
     "time"
+
+    "github.com/chzyer/readline"
 )
 
-// Message representa uma mensagem no histórico da conversa.
+// Message represents a message in the conversation history.
 type Message struct {
     Role    string
     Content string
 }
 
-// AIClient define a interface para clientes de IA (Gemini, Grok, OpenAI).
+// AIClient defines the interface for AI clients (Gemini, Grok, OpenAI).
 type AIClient interface {
     SendMessage(input string) (string, error)
     AddMessage(role, content string)
     GetHistory() []Message
 }
 
-// Config contém a configuração, incluindo o modelo selecionado, chaves API e opções automáticas.
+// Config contains the configuration, including the selected model, API keys, and auto options.
 type Config struct {
     SelectedModel string            `json:"selected_model"`
     APIKeys       map[string]string `json:"api_keys"`
@@ -34,7 +36,7 @@ type Config struct {
     AutoRun       bool              `json:"auto_run"`
 }
 
-// loadConfig carrega a configuração do arquivo de configuração.
+// loadConfig loads the configuration from the config file.
 func loadConfig(configFile string) (*Config, error) {
     data, err := os.ReadFile(configFile)
     if err != nil {
@@ -50,14 +52,14 @@ func loadConfig(configFile string) (*Config, error) {
     if config.APIKeys == nil {
         config.APIKeys = make(map[string]string)
     }
-    // Mapeia "grok" para "grok-2-latest" por compatibilidade
+    // Map "grok" to "grok-2-latest" for compatibility
     if config.SelectedModel == "grok" {
         config.SelectedModel = "grok-2-latest"
     }
     return &config, nil
 }
 
-// saveConfig salva a configuração no arquivo de configuração.
+// saveConfig saves the configuration to the config file.
 func saveConfig(configFile string, config *Config) error {
     data, err := json.MarshalIndent(config, "", "  ")
     if err != nil {
@@ -69,7 +71,7 @@ func saveConfig(configFile string, config *Config) error {
     return os.WriteFile(configFile, data, 0600)
 }
 
-// logMessages adiciona novas mensagens do histórico ao arquivo de log.
+// logMessages appends new messages from the history to the log file.
 func logMessages(logFile string, history []Message, startIdx int) error {
     f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
     if err != nil {
@@ -92,7 +94,7 @@ func main() {
     configDir := filepath.Join(os.Getenv("HOME"), ".config", "arisu")
     configFile := filepath.Join(configDir, "config.json")
 
-    // Configura o diretório e arquivo de log
+    // Set up log directory and file
     logDir := filepath.Join(configDir, "log")
     if err := os.MkdirAll(logDir, 0700); err != nil {
         fmt.Printf("Error creating log directory: %v\n", err)
@@ -153,7 +155,7 @@ func main() {
         }
     }
 
-    // Define Gemini como padrão se nenhum modelo for selecionado
+    // Default to Gemini if no model is selected
     if config.SelectedModel == "" {
         config.SelectedModel = "gemini"
     }
@@ -220,34 +222,41 @@ func main() {
     }
 
     fmt.Println("For multi-line input, end with a blank line.")
-    scanner := bufio.NewScanner(os.Stdin)
+    rl, err := readline.New("λ ")
+    if err != nil {
+        fmt.Printf("Error initializing readline: %v\n", err)
+        return
+    }
+    defer rl.Close()
+
     lastLoggedIndex := 0
     for {
-        fmt.Print("λ ")
         var inputLines []string
-
         for {
-            if !scanner.Scan() {
+            line, err := rl.Readline()
+            if err == io.EOF {
                 return
             }
-            line := scanner.Text()
-
+            if err == readline.ErrInterrupt {
+                continue
+            }
+            if err != nil {
+                fmt.Printf("Error reading line: %v\n", err)
+                return
+            }
+            line = strings.TrimSpace(line)
             if line == "exit" {
                 fmt.Println("Goodbye!")
                 return
             }
-
             if line == "" {
                 break
             }
-
             inputLines = append(inputLines, line)
         }
-
         if len(inputLines) == 0 {
             continue
         }
-
         input := strings.Join(inputLines, "\n")
         response, err := client.SendMessage(input)
         if err != nil {
@@ -262,7 +271,7 @@ func main() {
     }
 }
 
-// contains verifica se uma slice contém uma string específica.
+// contains checks if a slice contains a specific string.
 func contains(slice []string, item string) bool {
     for _, s := range slice {
         if s == item {
@@ -272,7 +281,7 @@ func contains(slice []string, item string) bool {
     return false
 }
 
-// confirmAction solicita confirmação do usuário e retorna true se confirmado.
+// confirmAction prompts the user for confirmation and returns true if confirmed.
 func confirmAction(prompt string) bool {
     fmt.Printf("%s (y/n): ", prompt)
     scanner := bufio.NewScanner(os.Stdin)
@@ -282,28 +291,28 @@ func confirmAction(prompt string) bool {
     return false
 }
 
-// handleResponse processa a resposta da IA, lidando com comandos e edições com confirmação.
+// handleResponse processes the AI response, handling commands and edits with confirmation.
 func handleResponse(response string, client AIClient, config *Config) {
     editRequests := extractEditRequests(response)
     commands := extractCommands(response)
     readRequests := extractReadRequests(response)
 
-    // Lida com edições de arquivos primeiro
+    // Handle file edits first
     for _, req := range editRequests {
         if config.AutoEdit || confirmAction(fmt.Sprintf("Apply edit to %s?", req.Filename)) {
             if err := os.WriteFile(req.Filename, []byte(req.Content), 0644); err != nil {
-                fmt.Printf("Erro ao editar %s: %v\n", req.Filename, err)
-                client.AddMessage("user", fmt.Sprintf("Erro ao editar %s: %v", req.Filename, err))
+                fmt.Printf("Error editing %s: %v\n", req.Filename, err)
+                client.AddMessage("user", fmt.Sprintf("Error editing %s: %v", req.Filename, err))
             } else {
-                fmt.Printf("Arquivo %s editado com sucesso.\n", req.Filename)
-                client.AddMessage("user", fmt.Sprintf("Arquivo %s editado:\n%s", req.Filename, req.Content))
+                fmt.Printf("File %s edited successfully.\n", req.Filename)
+                client.AddMessage("user", fmt.Sprintf("File %s edited:\n%s", req.Filename, req.Content))
             }
         } else {
             fmt.Printf("Edit to %s skipped.\n", req.Filename)
         }
     }
 
-    // Em seguida, lida com comandos
+    // Then handle commands
     for _, command := range commands {
         if config.AutoRun || confirmAction(fmt.Sprintf("Run command: %s?", command)) {
             var outputBuf bytes.Buffer
@@ -323,20 +332,20 @@ func handleResponse(response string, client AIClient, config *Config) {
         }
     }
 
-    // Lida com solicitações de leitura
+    // Handle read requests
     for _, filename := range readRequests {
         content, err := os.ReadFile(filename)
         if err != nil {
-            fmt.Printf("Erro ao ler %s: %v\n", filename, err)
-            client.AddMessage("user", fmt.Sprintf("Erro ao ler %s: %v", filename, err))
+            fmt.Printf("Error reading %s: %v\n", filename, err)
+            client.AddMessage("user", fmt.Sprintf("Error reading %s: %v", filename, err))
         } else {
-            fmt.Printf("Conteúdo de %s:\n%s\n", filename, string(content))
-            client.AddMessage("user", fmt.Sprintf("Conteúdo de %s:\n%s", filename, string(content)))
+            fmt.Printf("Content of %s:\n%s\n", filename, string(content))
+            client.AddMessage("user", fmt.Sprintf("Content of %s:\n%s", filename, string(content)))
         }
     }
 }
 
-// extractCommands extrai comandos bash entre <RUN> e </RUN>.
+// extractCommands extracts bash commands between <RUN> and </RUN>.
 func extractCommands(response string) []string {
     var commands []string
     start := 0
@@ -358,7 +367,7 @@ func extractCommands(response string) []string {
     return commands
 }
 
-// extractReadRequests extrai solicitações de leitura entre <READ> e </READ>.
+// extractReadRequests extracts read requests between <READ> and </READ>.
 func extractReadRequests(response string) []string {
     var filenames []string
     start := 0
@@ -380,13 +389,13 @@ func extractReadRequests(response string) []string {
     return filenames
 }
 
-// EditRequest representa uma solicitação de edição com nome do arquivo e conteúdo.
+// EditRequest represents an edit request with filename and content.
 type EditRequest struct {
     Filename string
     Content  string
 }
 
-// extractEditRequests extrai solicitações de edição entre <EDIT> e </EDIT>.
+// extractEditRequests extracts edit requests between <EDIT> and </EDIT>.
 func extractEditRequests(response string) []EditRequest {
     var requests []EditRequest
     start := 0
