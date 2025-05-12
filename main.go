@@ -1,7 +1,7 @@
 package main
 
 import (
-    "bufio" // Added to resolve undefined bufio errors
+    "bufio"
     "bytes"
     "encoding/json"
     "fmt"
@@ -15,20 +15,20 @@ import (
     "github.com/chzyer/readline"
 )
 
-// Message represents a message in the conversation history.
+// Message representa uma mensagem no histórico da conversa.
 type Message struct {
     Role    string
     Content string
 }
 
-// AIClient defines the interface for AI clients (Gemini, Grok, OpenAI).
+// AIClient define a interface para clientes de IA (Gemini, Grok, OpenAI).
 type AIClient interface {
     SendMessage(input string) (string, error)
     AddMessage(role, content string)
     GetHistory() []Message
 }
 
-// Config contains the configuration, including the selected model, API keys, and auto options.
+// Config contém a configuração, incluindo o modelo selecionado, chaves de API e opções automáticas.
 type Config struct {
     SelectedModel string            `json:"selected_model"`
     APIKeys       map[string]string `json:"api_keys"`
@@ -36,7 +36,7 @@ type Config struct {
     AutoRun       bool              `json:"auto_run"`
 }
 
-// loadConfig loads the configuration from the config file.
+// loadConfig carrega a configuração do arquivo de configuração.
 func loadConfig(configFile string) (*Config, error) {
     data, err := os.ReadFile(configFile)
     if err != nil {
@@ -52,14 +52,14 @@ func loadConfig(configFile string) (*Config, error) {
     if config.APIKeys == nil {
         config.APIKeys = make(map[string]string)
     }
-    // Map "grok" to "grok-2-latest" for compatibility
+    // Mapeia "grok" para "grok-2-latest" por compatibilidade
     if config.SelectedModel == "grok" {
         config.SelectedModel = "grok-2-latest"
     }
     return &config, nil
 }
 
-// saveConfig saves the configuration to the config file.
+// saveConfig salva a configuração no arquivo de configuração.
 func saveConfig(configFile string, config *Config) error {
     data, err := json.MarshalIndent(config, "", "  ")
     if err != nil {
@@ -71,7 +71,7 @@ func saveConfig(configFile string, config *Config) error {
     return os.WriteFile(configFile, data, 0600)
 }
 
-// logMessages appends new messages from the history to the log file.
+// logMessages adiciona novas mensagens do histórico ao arquivo de log.
 func logMessages(logFile string, history []Message, startIdx int) error {
     f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
     if err != nil {
@@ -94,10 +94,10 @@ func main() {
     configDir := filepath.Join(os.Getenv("HOME"), ".config", "arisu")
     configFile := filepath.Join(configDir, "config.json")
 
-    // Set up log directory and file
+    // Configura o diretório e arquivo de log
     logDir := filepath.Join(configDir, "log")
     if err := os.MkdirAll(logDir, 0700); err != nil {
-        fmt.Printf("Error creating log directory: %v\n", err)
+        fmt.Printf("Erro ao criar diretório de log: %v\n", err)
         return
     }
     timestamp := time.Now().Format("20060102_150405")
@@ -105,7 +105,7 @@ func main() {
 
     config, err := loadConfig(configFile)
     if err != nil {
-        fmt.Printf("Error loading config: %v\n", err)
+        fmt.Printf("Erro ao carregar config: %v\n", err)
         return
     }
 
@@ -114,7 +114,7 @@ func main() {
         switch args[0] {
         case "--setmodel":
             if len(args) < 2 {
-                fmt.Println("Usage: arisu --setmodel <model>")
+                fmt.Println("Uso: arisu --setmodel <model>")
                 return
             }
             model := args[1]
@@ -123,39 +123,39 @@ func main() {
             }
             config.SelectedModel = model
             if err := saveConfig(configFile, config); err != nil {
-                fmt.Printf("Error saving config: %v\n", err)
+                fmt.Printf("Erro ao salvar config: %v\n", err)
                 return
             }
-            fmt.Printf("Selected model set to %s\n", model)
+            fmt.Printf("Modelo selecionado definido como %s\n", model)
             return
         case "--auto-edit":
             if len(args) < 2 || (args[1] != "true" && args[1] != "false") {
-                fmt.Println("Usage: arisu --auto-edit true/false")
+                fmt.Println("Uso: arisu --auto-edit true/false")
                 return
             }
             config.AutoEdit = args[1] == "true"
             if err := saveConfig(configFile, config); err != nil {
-                fmt.Printf("Error saving config: %v\n", err)
+                fmt.Printf("Erro ao salvar config: %v\n", err)
                 return
             }
-            fmt.Printf("Auto-edit set to %v\n", config.AutoEdit)
+            fmt.Printf("Auto-edit definido como %v\n", config.AutoEdit)
             return
         case "--auto-run":
             if len(args) < 2 || (args[1] != "true" && args[1] != "false") {
-                fmt.Println("Usage: arisu --auto-run true/false")
+                fmt.Println("Uso: arisu --auto-run true/false")
                 return
             }
             config.AutoRun = args[1] == "true"
             if err := saveConfig(configFile, config); err != nil {
-                fmt.Printf("Error saving config: %v\n", err)
+                fmt.Printf("Erro ao salvar config: %v\n", err)
                 return
             }
-            fmt.Printf("Auto-run set to %v\n", config.AutoRun)
+            fmt.Printf("Auto-run definido como %v\n", config.AutoRun)
             return
         }
     }
 
-    // Default to Gemini if no model is selected
+    // Define Gemini como padrão se nenhum modelo for selecionado
     if config.SelectedModel == "" {
         config.SelectedModel = "gemini"
     }
@@ -177,24 +177,24 @@ func main() {
     } else if contains(openaiModels, config.SelectedModel) {
         provider = "openai"
     } else {
-        fmt.Println("Invalid selected model in config.")
+        fmt.Println("Modelo selecionado inválido na configuração.")
         return
     }
 
     apiKey, ok := config.APIKeys[provider]
     if !ok || apiKey == "" {
-        fmt.Printf("Enter your %s API key: ", provider)
+        fmt.Printf("Digite sua chave API do %s: ", provider)
         scanner := bufio.NewScanner(os.Stdin)
         if scanner.Scan() {
             apiKey = scanner.Text()
         }
         if apiKey == "" {
-            fmt.Println("Error: No API key provided.")
+            fmt.Println("Erro: Nenhuma chave API fornecida.")
             return
         }
         config.APIKeys[provider] = apiKey
         if err := saveConfig(configFile, config); err != nil {
-            fmt.Printf("Error saving config: %v\n", err)
+            fmt.Printf("Erro ao salvar config: %v\n", err)
         }
     }
 
@@ -211,20 +211,20 @@ func main() {
         prompt := strings.Join(args, " ")
         response, err := client.SendMessage(prompt)
         if err != nil {
-            fmt.Printf("Error: %v\n", err)
+            fmt.Printf("Erro: %v\n", err)
             return
         }
         handleResponse(response, client, config)
         if err := logMessages(logFile, client.GetHistory(), 0); err != nil {
-            fmt.Printf("Error logging messages: %v\n", err)
+            fmt.Printf("Erro ao registrar mensagens: %v\n", err)
         }
         return
     }
 
-    fmt.Println("For multi-line input, end with a blank line.")
+    fmt.Println("Para entrada de várias linhas, termine com uma linha em branco.")
     rl, err := readline.New("λ ")
     if err != nil {
-        fmt.Printf("Error initializing readline: %v\n", err)
+        fmt.Printf("Erro ao inicializar readline: %v\n", err)
         return
     }
     defer rl.Close()
@@ -241,12 +241,12 @@ func main() {
                 continue
             }
             if err != nil {
-                fmt.Printf("Error reading line: %v\n", err)
+                fmt.Printf("Erro ao ler linha: %v\n", err)
                 return
             }
             line = strings.TrimSpace(line)
             if line == "exit" {
-                fmt.Println("Goodbye!")
+                fmt.Println("Adeus!")
                 return
             }
             if line == "" {
@@ -260,18 +260,18 @@ func main() {
         input := strings.Join(inputLines, "\n")
         response, err := client.SendMessage(input)
         if err != nil {
-            fmt.Printf("Error: %v\n", err)
+            fmt.Printf("Erro: %v\n", err)
             continue
         }
         handleResponse(response, client, config)
         if err := logMessages(logFile, client.GetHistory(), lastLoggedIndex); err != nil {
-            fmt.Printf("Error logging messages: %v\n", err)
+            fmt.Printf("Erro ao registrar mensagens: %v\n", err)
         }
         lastLoggedIndex = len(client.GetHistory())
     }
 }
 
-// contains checks if a slice contains a specific string.
+// contains verifica se uma fatia contém uma string específica.
 func contains(slice []string, item string) bool {
     for _, s := range slice {
         if s == item {
@@ -281,7 +281,7 @@ func contains(slice []string, item string) bool {
     return false
 }
 
-// confirmAction prompts the user for confirmation and returns true if confirmed.
+// confirmAction solicita confirmação do usuário e retorna true se confirmado.
 func confirmAction(prompt string) bool {
     fmt.Printf("%s (y/n): ", prompt)
     scanner := bufio.NewScanner(os.Stdin)
@@ -291,135 +291,145 @@ func confirmAction(prompt string) bool {
     return false
 }
 
-// handleResponse processes the AI response, handling commands and edits with confirmation.
-func handleResponse(response string, client AIClient, config *Config) {
-    editRequests := extractEditRequests(response)
-    commands := extractCommands(response)
-    readRequests := extractReadRequests(response)
-
-    // Handle file edits first
-    for _, req := range editRequests {
-        if config.AutoEdit || confirmAction(fmt.Sprintf("Apply edit to %s?", req.Filename)) {
-            if err := os.WriteFile(req.Filename, []byte(req.Content), 0644); err != nil {
-                fmt.Printf("Error editing %s: %v\n", req.Filename, err)
-                client.AddMessage("user", fmt.Sprintf("Error editing %s: %v", req.Filename, err))
-            } else {
-                fmt.Printf("File %s edited successfully.\n", req.Filename)
-                client.AddMessage("user", fmt.Sprintf("File %s edited:\n%s", req.Filename, req.Content))
-            }
-        } else {
-            fmt.Printf("Edit to %s skipped.\n", req.Filename)
-        }
-    }
-
-    // Then handle commands
-    for _, command := range commands {
-        if config.AutoRun || confirmAction(fmt.Sprintf("Run command: %s?", command)) {
-            var outputBuf bytes.Buffer
-            cmd := exec.Command("bash", "-c", command)
-            cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
-            cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
-            err := cmd.Run()
-            if err != nil {
-                fmt.Printf("Command failed with error: %v\n", err)
-            }
-            output := outputBuf.String()
-            if output != "" {
-                client.AddMessage("user", "Command output:\n"+output)
-            }
-        } else {
-            fmt.Printf("Command skipped: %s\n", command)
-        }
-    }
-
-    // Handle read requests
-    for _, filename := range readRequests {
-        content, err := os.ReadFile(filename)
-        if err != nil {
-            fmt.Printf("Error reading %s: %v\n", filename, err)
-            client.AddMessage("user", fmt.Sprintf("Error reading %s: %v", filename, err))
-        } else {
-            fmt.Printf("Content of %s:\n%s\n", filename, string(content))
-            client.AddMessage("user", fmt.Sprintf("Content of %s:\n%s", filename, string(content)))
-        }
-    }
+// Action define a interface para diferentes tipos de ações.
+type Action interface {
+    Execute(client AIClient, config *Config) error
 }
 
-// extractCommands extracts bash commands between <RUN> and </RUN>.
-func extractCommands(response string) []string {
-    var commands []string
-    start := 0
-    for {
-        startIdx := strings.Index(response[start:], "<RUN>")
-        if startIdx == -1 {
-            break
-        }
-        startIdx += start
-        endIdx := strings.Index(response[startIdx:], "</RUN>")
-        if endIdx == -1 {
-            break
-        }
-        endIdx += startIdx
-        command := strings.TrimSpace(response[startIdx+5 : endIdx])
-        commands = append(commands, command)
-        start = endIdx + 6
-    }
-    return commands
-}
-
-// extractReadRequests extracts read requests between <READ> and </READ>.
-func extractReadRequests(response string) []string {
-    var filenames []string
-    start := 0
-    for {
-        startIdx := strings.Index(response[start:], "<READ>")
-        if startIdx == -1 {
-            break
-        }
-        startIdx += start
-        endIdx := strings.Index(response[startIdx:], "</READ>")
-        if endIdx == -1 {
-            break
-        }
-        endIdx += startIdx
-        filename := strings.TrimSpace(response[startIdx+6 : endIdx])
-        filenames = append(filenames, filename)
-        start = endIdx + 7
-    }
-    return filenames
-}
-
-// EditRequest represents an edit request with filename and content.
-type EditRequest struct {
+// EditAction representa uma ação de edição.
+type EditAction struct {
     Filename string
     Content  string
 }
 
-// extractEditRequests extracts edit requests between <EDIT> and </EDIT>.
-func extractEditRequests(response string) []EditRequest {
-    var requests []EditRequest
+func (e EditAction) Execute(client AIClient, config *Config) error {
+    if config.AutoEdit || confirmAction(fmt.Sprintf("Aplicar edição em %s?", e.Filename)) {
+        if err := os.WriteFile(e.Filename, []byte(e.Content), 0644); err != nil {
+            fmt.Printf("Erro ao editar %s: %v\n", e.Filename, err)
+            client.AddMessage("user", fmt.Sprintf("Erro ao editar %s: %v", e.Filename, err))
+            return err
+        }
+        fmt.Printf("Arquivo %s editado com sucesso.\n", e.Filename)
+        client.AddMessage("user", fmt.Sprintf("Arquivo %s editado:\n%s", e.Filename, e.Content))
+    } else {
+        fmt.Printf("Edição em %s pulada.\n", e.Filename)
+    }
+    return nil
+}
+
+// RunAction representa uma ação de execução de comando.
+type RunAction struct {
+    Command string
+}
+
+func (r RunAction) Execute(client AIClient, config *Config) error {
+    if config.AutoRun || confirmAction(fmt.Sprintf("Executar comando: %s?", r.Command)) {
+        var outputBuf bytes.Buffer
+        cmd := exec.Command("bash", "-c", r.Command)
+        cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
+        cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
+        err := cmd.Run()
+        if err != nil {
+            fmt.Printf("Comando falhou com erro: %v\n", err)
+            client.AddMessage("user", fmt.Sprintf("Comando falhou: %s\nErro: %v", r.Command, err))
+            return err
+        }
+        output := outputBuf.String()
+        if output != "" {
+            client.AddMessage("user", "Saída do comando:\n"+output)
+        }
+    } else {
+        fmt.Printf("Comando pulado: %s\n", r.Command)
+    }
+    return nil
+}
+
+// ReadAction representa uma ação de leitura.
+type ReadAction struct {
+    Filename string
+}
+
+func (r ReadAction) Execute(client AIClient, config *Config) error {
+    content, err := os.ReadFile(r.Filename)
+    if err != nil {
+        fmt.Printf("Erro ao ler %s: %v\n", r.Filename, err)
+        client.AddMessage("user", fmt.Sprintf("Erro ao ler %s: %v", r.Filename, err))
+        return err
+    }
+    fmt.Printf("Conteúdo de %s:\n%s\n", r.Filename, string(content))
+    client.AddMessage("user", fmt.Sprintf("Conteúdo de %s:\n%s", r.Filename, string(content)))
+    return nil
+}
+
+// extractActions extrai ações da resposta na ordem em que aparecem.
+func extractActions(response string) []Action {
+    var actions []Action
     start := 0
     for {
-        startIdx := strings.Index(response[start:], "<EDIT>")
-        if startIdx == -1 {
+        // Encontra a próxima tag
+        editIdx := strings.Index(response[start:], "<EDIT>")
+        runIdx := strings.Index(response[start:], "<RUN>")
+        readIdx := strings.Index(response[start:], "<READ>")
+
+        // Determina a tag mais próxima
+        indices := []int{editIdx, runIdx, readIdx}
+        minIdx := -1
+        tagType := ""
+        for i, idx := range indices {
+            if idx != -1 && (minIdx == -1 || idx < minIdx) {
+                minIdx = idx
+                switch i {
+                case 0:
+                    tagType = "EDIT"
+                case 1:
+                    tagType = "RUN"
+                case 2:
+                    tagType = "READ"
+                }
+            }
+        }
+        if minIdx == -1 {
             break
         }
-        startIdx += start
-        endIdx := strings.Index(response[startIdx:], "</EDIT>")
+        minIdx += start
+
+        // Encontra a tag de fechamento
+        endTag := "</" + tagType + ">"
+        endIdx := strings.Index(response[minIdx:], endTag)
         if endIdx == -1 {
             break
         }
-        endIdx += startIdx
-        content := strings.TrimSpace(response[startIdx+6 : endIdx])
-        lines := strings.SplitN(content, "\n", 2)
-        if len(lines) < 2 {
-            start = endIdx + 7
-            continue
+        endIdx += minIdx + len(endTag)
+
+        // Extrai o conteúdo entre as tags
+        contentStart := minIdx + len("<" + tagType + ">")
+        content := strings.TrimSpace(response[contentStart:endIdx-len(endTag)])
+
+        switch tagType {
+        case "EDIT":
+            lines := strings.SplitN(content, "\n", 2)
+            if len(lines) == 2 {
+                filename := strings.TrimSpace(lines[0])
+                editContent := strings.TrimSpace(lines[1])
+                actions = append(actions, EditAction{Filename: filename, Content: editContent})
+            }
+        case "RUN":
+            actions = append(actions, RunAction{Command: content})
+        case "READ":
+            actions = append(actions, ReadAction{Filename: content})
         }
-        filename := strings.TrimSpace(lines[0])
-        editContent := strings.TrimSpace(lines[1])
-        requests = append(requests, EditRequest{Filename: filename, Content: editContent})
-        start = endIdx + 7
+
+        start = endIdx
     }
-    return requests
+    return actions
+}
+
+// handleResponse processa a resposta do AI, executando ações na ordem em que aparecem.
+func handleResponse(response string, client AIClient, config *Config) {
+    actions := extractActions(response)
+    for _, action := range actions {
+        if err := action.Execute(client, config); err != nil {
+            fmt.Printf("Erro ao executar ação: %v\n", err)
+        }
+    }
 }
