@@ -33,9 +33,12 @@ func NewOpenAIClient(apiKey, model string) *OpenAIClient {
             "3. If I ask you to update or refactor a file, provide the filename and the FULL updated content like this:\n\n"+
             "<EDIT>\nfilename.txt\ncomplete_new_content_here\n</EDIT>\n\n"+
             "Edits will be applied automatically with a single prompt, so ensure the content is correct, complete, and ready to overwrite the existing file.\n\n"+
-            "Important: When presenting code in your responses, do NOT use triple backticks (```). Write the code as plain text directly in the response.\n\n"+
-            "Keep your answers concise, relevant, and focused on simplicity. Use the tags above to trigger actions when appropriate.\n\n"+
-            "When overwriting files, always provide the complete new version of the file, never partial changes or placeholders.",
+            "Important:\n"+
+            "- NEVER run/read/edit UNLESS I ASK FOR IT (indirectly or directly).\n"+
+            "- NEVER use the tags unless you are sure that it is a valid command. If it is a placebo command, do not use the tags; the program will always pick it up.\n"+
+            "- When presenting code in your responses, do NOT use triple backticks (```). Write the code as plain text directly in the response.\n"+
+            "- Keep your answers concise, relevant, and focused on simplicity. Use the tags above to trigger actions when appropriate.\n"+
+            "- When overwriting files, always provide the complete new version of the file, never partial changes or placeholders.",
         runtime.GOOS,
     )
     history := []Message{{Role: "system", Content: initialPrompt}}
