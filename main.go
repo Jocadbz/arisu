@@ -225,6 +225,9 @@ func main() {
 			fmt.Printf("Erro: %v\n", err)
 			return
 		}
+		if strings.TrimSpace(response) == "" {
+			fmt.Println("Erro: Nenhum resultado retornado pela API.")
+		}
 		handleResponse(response, client, config)
 		if err := logMessages(logFile, client.GetHistory(), 0); err != nil {
 			fmt.Printf("Erro ao registrar mensagens: %v\n", err)
@@ -273,6 +276,9 @@ func main() {
 		if err != nil {
 			fmt.Printf("Erro: %v\n", err)
 			continue
+		}
+		if strings.TrimSpace(response) == "" {
+			fmt.Println("Erro: Nenhum resultado retornado pela API.")
 		}
 		handleResponse(response, client, config)
 		if err := logMessages(logFile, client.GetHistory(), lastLoggedIndex); err != nil {
@@ -413,8 +419,8 @@ func extractActions(response string) []Action {
 		endIdx += minIdx + len(endTag)
 
 		// Extrai o conteúdo entre as tags
-		contentStart := minIdx + len("<" + tagType + ">")
-		content := strings.TrimSpace(response[contentStart:endIdx-len(endTag)])
+		contentStart := minIdx + len("<"+tagType+">")
+		content := strings.TrimSpace(response[contentStart : endIdx-len(endTag)])
 
 		switch tagType {
 		case "EDIT":
