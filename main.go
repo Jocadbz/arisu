@@ -174,6 +174,8 @@ func main() {
 		provider = "grok"
 	} else if contains(openaiModels, config.SelectedModel) {
 		provider = "openai"
+	} else if strings.HasPrefix(config.SelectedModel, "openrouter-") {
+		provider = "openrouter"
 	} else {
 		fmt.Println("Invalid selected model in config.")
 		return
@@ -207,6 +209,8 @@ func main() {
 		client = NewGrokClient(apiKey, config.SelectedModel)
 	} else if provider == "openai" {
 		client = NewOpenAIClient(apiKey, config.SelectedModel)
+	} else if provider == "openrouter" {
+		client = NewOpenRouterClient(apiKey, config.SelectedModel)
 	}
 
 	if len(args) > 0 {
@@ -511,3 +515,4 @@ func appendToFile(filename, text string) error {
 	_, err = f.WriteString(text)
 	return err
 }
+
