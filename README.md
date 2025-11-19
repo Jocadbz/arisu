@@ -45,7 +45,7 @@ arisu
 arisu "Help me refactor my Go code"
 ```
 
-For multi-line input, end with a blank line. Type `exit` to quit.
+Press Enter to send a prompt. Use Ctrl+Enter to insert a new line without sending. Type `exit` to quit.
 
 ### Setting Models and Configuration
 
@@ -67,6 +67,7 @@ arisu --auto-run false
 - `gemini-2.0-flash`
 - `gemini-2.5-flash`
 - `gemini-2.5-pro`
+- `gemini-3.0-pro`
 
 **Grok (xAI):**
 - Any model (text-only, no image generation)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -220,9 +221,21 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			return
 		}
-		handleResponse(response, client, config)
-		checkAndRunAgenticMode(client, config, logDir)
-		_ = logMessages(logFile, client.GetHistory(), 0)
+
+		for {
+			output, isToolCall := handleResponse(response, client, config)
+			_ = logMessages(logFile, client.GetHistory(), 0)
+
+			if isToolCall {
+				response, err = client.SendMessage(output)
+				if err != nil {
+					fmt.Printf("Error sending tool output: %v\n", err)
+					return
+				}
+			} else {
+				break
+			}
+		}
 		return
 	}
 
@@ -276,10 +289,22 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			continue
 		}
-		handleResponse(response, client, config)
-		checkAndRunAgenticMode(client, config, logDir)
-		_ = logMessages(logFile, client.GetHistory(), lastLoggedIndex)
-		lastLoggedIndex = len(client.GetHistory())
+
+		for {
+			output, isToolCall := handleResponse(response, client, config)
+			_ = logMessages(logFile, client.GetHistory(), lastLoggedIndex)
+			lastLoggedIndex = len(client.GetHistory())
+
+			if isToolCall {
+				response, err = client.SendMessage(output)
+				if err != nil {
+					fmt.Printf("Error sending tool output: %v\n", err)
+					break
+				}
+			} else {
+				break
+			}
+		}
 	}
 }
 
@@ -301,8 +326,95 @@ func confirmAction(prompt string) bool {
 	return false
 }
 
+type Block struct {
+	ID    int
+	Lines []string
+}
+
+func parseBlocks(content string) []Block {
+	lines := strings.Split(content, "\n")
+	var blocks []Block
+	var currentLines []string
+
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			if len(currentLines) > 0 {
+				blocks = append(blocks, Block{ID: len(blocks), Lines: currentLines})
+				currentLines = nil
+			}
+		} else {
+			currentLines = append(currentLines, line)
+		}
+	}
+	if len(currentLines) > 0 {
+		blocks = append(blocks, Block{ID: len(blocks), Lines: currentLines})
+	}
+	return blocks
+}
+
+func blocksToString(blocks []Block) string {
+	var sb strings.Builder
+	for i, b := range blocks {
+		for _, line := range b.Lines {
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+		if i < len(blocks)-1 {
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
+}
+
 type Action interface {
-	Execute(client AIClient, config *Config) error
+	Execute(client AIClient, config *Config, isToolCall bool) (string, error)
+}
+
+type PatchAction struct {
+	Filename string
+	ID       int
+	Content  string
+}
+
+func (p PatchAction) Execute(client AIClient, config *Config, isToolCall bool) (string, error) {
+	if config.AutoEdit || confirmAction(fmt.Sprintf("Apply patch to block %d in %s?", p.ID, p.Filename)) {
+		content, err := os.ReadFile(p.Filename)
+		if err != nil {
+			fmt.Printf("Error reading %s: %v\n", p.Filename, err)
+			return fmt.Sprintf("Error reading %s: %v", p.Filename, err), err
+		}
+
+		blocks := parseBlocks(string(content))
+		if p.ID < 0 || p.ID >= len(blocks) {
+			fmt.Printf("Error: Block ID %d not found in %s\n", p.ID, p.Filename)
+			return fmt.Sprintf("Error: Block ID %d not found in %s", p.ID, p.Filename), fmt.Errorf("block id not found")
+		}
+
+		// Update block
+		if strings.TrimSpace(p.Content) == "" {
+			// Delete block
+			blocks = append(blocks[:p.ID], blocks[p.ID+1:]...)
+		} else {
+			// Replace block
+			newLines := strings.Split(p.Content, "\n")
+			// Remove trailing newline from split if content ends with newline
+			if len(newLines) > 0 && newLines[len(newLines)-1] == "" {
+				newLines = newLines[:len(newLines)-1]
+			}
+			blocks[p.ID].Lines = newLines
+		}
+
+		newContent := blocksToString(blocks)
+		if err := os.WriteFile(p.Filename, []byte(newContent), 0644); err != nil {
+			fmt.Printf("Error writing %s: %v\n", p.Filename, err)
+			return fmt.Sprintf("Error writing %s: %v", p.Filename, err), err
+		}
+		fmt.Printf("File %s patched successfully.\n", p.Filename)
+		return fmt.Sprintf("File %s patched successfully.", p.Filename), nil
+	} else {
+		fmt.Printf("Patch on %s skipped.\n", p.Filename)
+		return fmt.Sprintf("Patch on %s skipped.", p.Filename), nil
+	}
 }
 
 type EditAction struct {
@@ -310,26 +422,25 @@ type EditAction struct {
 	Content  string
 }
 
-func (e EditAction) Execute(client AIClient, config *Config) error {
-	if config.AutoEdit || confirmAction(fmt.Sprintf("Apply edit to %s?", e.Filename)) {
+func (e EditAction) Execute(client AIClient, config *Config, isToolCall bool) (string, error) {
+	if config.AutoEdit || confirmAction(fmt.Sprintf("Overwrite/Create %s?", e.Filename)) {
 		if err := os.WriteFile(e.Filename, []byte(e.Content), 0644); err != nil {
-			fmt.Printf("Error editing %s: %v\n", e.Filename, err)
-			client.AddMessage("user", fmt.Sprintf("Error editing %s: %v", e.Filename, err))
-			return err
+			fmt.Printf("Error writing %s: %v\n", e.Filename, err)
+			return fmt.Sprintf("Error writing %s: %v", e.Filename, err), err
 		}
-		fmt.Printf("File %s edited successfully.\n", e.Filename)
-		client.AddMessage("user", fmt.Sprintf("File %s edited:\n%s", e.Filename, e.Content))
+		fmt.Printf("File %s written successfully.\n", e.Filename)
+		return fmt.Sprintf("File %s written successfully.", e.Filename), nil
 	} else {
-		fmt.Printf("Edit on %s skipped.\n", e.Filename)
+		fmt.Printf("Write on %s skipped.\n", e.Filename)
+		return fmt.Sprintf("Write on %s skipped.", e.Filename), nil
 	}
-	return nil
 }
 
 type RunAction struct {
 	Command string
 }
 
-func (r RunAction) Execute(client AIClient, config *Config) error {
+func (r RunAction) Execute(client AIClient, config *Config, isToolCall bool) (string, error) {
 	if config.AutoRun || confirmAction(fmt.Sprintf("Execute command: %s?", r.Command)) {
 		var outputBuf bytes.Buffer
 		cmd := exec.Command("bash", "-c", r.Command)
@@ -338,45 +449,62 @@ func (r RunAction) Execute(client AIClient, config *Config) error {
 		err := cmd.Run()
 		if err != nil {
 			fmt.Printf("Command failed with error: %v\n", err)
-			client.AddMessage("user", fmt.Sprintf("Command failed: %s\nError: %v", r.Command, err))
-			return err
+			return fmt.Sprintf("Command failed: %s\nError: %v", r.Command, err), err
 		}
 		output := outputBuf.String()
 		if output != "" {
-			client.AddMessage("user", "Command output:\n"+output)
+			return "Command output:\n" + output, nil
 		}
+		return "Command executed successfully (no output).", nil
 	} else {
 		fmt.Printf("Command skipped: %s\n", r.Command)
+		return fmt.Sprintf("Command skipped: %s", r.Command), nil
 	}
-	return nil
 }
 
 type ReadAction struct {
 	Filename string
 }
 
-func (r ReadAction) Execute(client AIClient, config *Config) error {
+func (r ReadAction) Execute(client AIClient, config *Config, isToolCall bool) (string, error) {
 	content, err := os.ReadFile(r.Filename)
 	if err != nil {
 		fmt.Printf("Error reading %s: %v\n", r.Filename, err)
-		client.AddMessage("user", fmt.Sprintf("Error reading %s: %v", r.Filename, err))
-		return err
+		return fmt.Sprintf("Error reading %s: %v", r.Filename, err), err
 	}
-	fmt.Printf("Content of %s:\n%s\n", r.Filename, string(content))
-	client.AddMessage("user", string(content))
-	return nil
+
+	blocks := parseBlocks(string(content))
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Content of %s (split into blocks):\n", r.Filename))
+	for _, b := range blocks {
+		sb.WriteString(fmt.Sprintf("--- BLOCK %d ---\n", b.ID))
+		for _, line := range b.Lines {
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+	}
+
+	fmt.Printf("Content of %s displayed in blocks.\n", r.Filename)
+	return sb.String(), nil
 }
 
-func handleResponse(response string, client AIClient, config *Config) {
-	var actions []Action
+func handleResponse(response string, client AIClient, config *Config) (string, bool) {
+	var actions []struct {
+		Action     Action
+		IsToolCall bool
+	}
 	remainingResponse := response
 
+	hasToolCall := false
+	var outputBuilder strings.Builder
+
 	for {
+		patchStart := strings.Index(remainingResponse, "<PATCH>")
 		editStart := strings.Index(remainingResponse, "<EDIT>")
 		runStart := strings.Index(remainingResponse, "<RUN>")
 		readStart := strings.Index(remainingResponse, "<READ>")
 
-		if editStart == -1 && runStart == -1 && readStart == -1 {
+		if patchStart == -1 && editStart == -1 && runStart == -1 && readStart == -1 {
 			break
 		}
 
@@ -387,7 +515,10 @@ func handleResponse(response string, client AIClient, config *Config) {
 
 		firstTag := tagInfo{-1, ""}
 
-		if editStart != -1 {
+		if patchStart != -1 {
+			firstTag = tagInfo{patchStart, "PATCH"}
+		}
+		if editStart != -1 && (firstTag.start == -1 || editStart < firstTag.start) {
 			firstTag = tagInfo{editStart, "EDIT"}
 		}
 		if runStart != -1 && (firstTag.start == -1 || runStart < firstTag.start) {
@@ -397,10 +528,50 @@ func handleResponse(response string, client AIClient, config *Config) {
 			firstTag = tagInfo{readStart, "READ"}
 		}
 
+		// Check for [TOOL_CALL] prefix
+		isToolCall := false
+		prefix := remainingResponse[:firstTag.start]
+		if strings.Contains(prefix, "[TOOL_CALL]") {
+			// Simple check: if [TOOL_CALL] appears in the text before the tag,
+			// and after the previous tag (which is handled by slicing remainingResponse).
+			// However, we need to be careful about false positives if the user just typed it.
+			// But the instruction is to prepend it.
+			// Let's check if it's the last non-whitespace thing before the tag.
+			trimmedPrefix := strings.TrimSpace(prefix)
+			if strings.HasSuffix(trimmedPrefix, "[TOOL_CALL]") {
+				isToolCall = true
+				hasToolCall = true
+			}
+		}
+
 		var endTag, content string
 		var endIdx int
 
 		switch firstTag.tag {
+		case "PATCH":
+			endTag = "</PATCH>"
+			endIdx = strings.Index(remainingResponse, endTag)
+			if endIdx == -1 {
+				remainingResponse = remainingResponse[firstTag.start+len("<PATCH>"):]
+				continue
+			}
+			content = remainingResponse[firstTag.start+len("<PATCH>") : endIdx]
+			lines := strings.SplitN(strings.TrimSpace(content), "\n", 3)
+			if len(lines) >= 2 {
+				filename := strings.TrimSpace(lines[0])
+				idStr := strings.TrimSpace(lines[1])
+				id, err := strconv.Atoi(idStr)
+				if err == nil {
+					patchContent := ""
+					if len(lines) == 3 {
+						patchContent = lines[2]
+					}
+					actions = append(actions, struct {
+						Action     Action
+						IsToolCall bool
+					}{PatchAction{Filename: filename, ID: id, Content: patchContent}, isToolCall})
+				}
+			}
 		case "EDIT":
 			endTag = "</EDIT>"
 			endIdx = strings.Index(remainingResponse, endTag)
@@ -413,7 +584,10 @@ func handleResponse(response string, client AIClient, config *Config) {
 			if len(lines) == 2 {
 				filename := strings.TrimSpace(lines[0])
 				fileContent := lines[1]
-				actions = append(actions, EditAction{Filename: filename, Content: fileContent})
+				actions = append(actions, struct {
+					Action     Action
+					IsToolCall bool
+				}{EditAction{Filename: filename, Content: fileContent}, isToolCall})
 			}
 		case "RUN":
 			endTag = "</RUN>"
@@ -423,7 +597,10 @@ func handleResponse(response string, client AIClient, config *Config) {
 				continue
 			}
 			content = remainingResponse[firstTag.start+len("<RUN>") : endIdx]
-			actions = append(actions, RunAction{Command: strings.TrimSpace(content)})
+			actions = append(actions, struct {
+				Action     Action
+				IsToolCall bool
+			}{RunAction{Command: strings.TrimSpace(content)}, isToolCall})
 		case "READ":
 			endTag = "</READ>"
 			endIdx = strings.Index(remainingResponse, endTag)
@@ -432,7 +609,10 @@ func handleResponse(response string, client AIClient, config *Config) {
 				continue
 			}
 			content = remainingResponse[firstTag.start+len("<READ>") : endIdx]
-			actions = append(actions, ReadAction{Filename: strings.TrimSpace(content)})
+			actions = append(actions, struct {
+				Action     Action
+				IsToolCall bool
+			}{ReadAction{Filename: strings.TrimSpace(content)}, isToolCall})
 		}
 
 		if endIdx != -1 {
@@ -440,86 +620,15 @@ func handleResponse(response string, client AIClient, config *Config) {
 		}
 	}
 
-	for _, action := range actions {
-		_ = action.Execute(client, config)
-	}
-}
-
-func checkAndRunAgenticMode(client AIClient, config *Config, logDir string) {
-	agentFile := "AGENTSTEPS.arisu"
-	if _, err := os.Stat(agentFile); os.IsNotExist(err) {
-		return
-	}
-	runAgenticMode(agentFile, client, config, logDir)
-}
-
-func runAgenticMode(agentFile string, client AIClient, config *Config, logDir string) {
-	data, err := os.ReadFile(agentFile)
-	if err != nil {
-		fmt.Printf("Error reading %s: %v\n", agentFile, err)
-		return
-	}
-
-	content := string(data)
-	parts := strings.Split(content, "Steps:")
-	if len(parts) < 2 {
-		fmt.Println("Invalid AGENTSTEPS.arisu file.")
-		return
-	}
-	steps := strings.Split(strings.TrimSpace(parts[1]), "\n")
-	agentLog := filepath.Join(logDir, "agent-run-"+time.Now().Format("20060102_150405")+".log")
-
-	runCount := 0
-	for _, step := range steps {
-		step = strings.TrimSpace(step)
-		if step == "" {
-			continue
+	for _, item := range actions {
+		output, _ := item.Action.Execute(client, config, item.IsToolCall)
+		if item.IsToolCall {
+			outputBuilder.WriteString(output)
+			outputBuilder.WriteString("\n")
+		} else {
+			client.AddMessage("user", output)
 		}
-		runCount++
-		if runCount > 10 {
-			fmt.Println("10-run limit reached. Exiting agentic mode.")
-			client.AddMessage("assistant", "<END>")
-			os.Remove("AGENTSTEPS.arisu")
-			return
-		}
-
-		fmt.Printf("\n[Agentic] Executing step: %s\n", step)
-		response, err := client.SendMessage(step)
-		if err != nil {
-			fmt.Printf("Error in agent run: %v\n", err)
-			os.Remove("AGENTSTEPS.arisu")
-			return
-		}
-
-		handleResponse(response, client, config)
-
-		_ = appendToFile(agentLog, fmt.Sprintf("Step %d: %s\nResponse:\n%s\n\n", runCount, step, response))
-
-		if strings.Contains(response, "<END>") {
-			fmt.Println("[Agentic] Tag detected, exiting agentic mode.")
-			os.Remove("AGENTSTEPS.arisu")
-			return
-		}
-
-		proceedResponse, err := client.SendMessage("Proceed.")
-		if err != nil {
-			fmt.Printf("Error sending Proceed: %v\n", err)
-			os.Remove("AGENTSTEPS.arisu")
-			return
-		}
-
-		handleResponse(proceedResponse, client, config)
-
-		_ = appendToFile(agentLog, fmt.Sprintf("Proceed Response for Step %d:\n%s\n\n", runCount, proceedResponse))
 	}
-}
 
-func appendToFile(filename, text string) error {
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.WriteString(text)
-	return err
+	return outputBuilder.String(), hasToolCall
 }

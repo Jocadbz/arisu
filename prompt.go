@@ -21,30 +21,31 @@ func defaultSystemPrompt() string {
 			"2. If I ask you to read a file or you need its contents, include the filename like this:\n\n"+
 			"<READ>filename.txt</READ>\n\n"+
 			"I’ll send you the file content afterward.\n\n"+
-			"3. If I ask you to update or refactor a file, provide the filename and the FULL updated content like this:\n\n"+
+			"3. If I ask you to update or refactor a file, use the PATCH format. Files are displayed in blocks of non-empty lines with IDs.\n"+
+			"To modify a block, use:\n\n"+
+			"<PATCH>\n"+
+			"filename.txt\n"+
+			"block_id\n"+
+			"new_content_here\n"+
+			"</PATCH>\n\n"+
+			"To delete a block, provide an empty content (just the filename and block_id).\n"+
+			"To split a block, include empty lines in the new content.\n"+
+			"To create a new file or overwrite completely, use <EDIT>:\n"+
 			"<EDIT>\n"+
 			"filename.txt\n"+
-			"complete_new_content_here\n"+
+			"full_content\n"+
 			"</EDIT>\n\n"+
-			"Edits will be applied automatically with a single prompt, so ensure the content is correct, complete, and ready to overwrite the existing file.\n\n"+
+			"To execute a command immediately and get the output back to continue the conversation (Agentic/Tool Call), prepend [TOOL_CALL] before the tag.\n"+
+			"Example:\n"+
+			"[TOOL_CALL] <RUN>ls -la</RUN>\n"+
+			"This will run the command and feed the output back to you automatically.\n"+
+			"Use [TOOL_CALL] repeatedly to verify your work (e.g. reading files back, running tests) until you are ABSOLUTELY SURE the user's request is fulfilled.\n\n"+
 			"Important:\n"+
 			"- NEVER run/read/edit UNLESS I ASK FOR IT (indirectly or directly).\n"+
 			"- NEVER use the tags unless you are sure that it is a valid command. If it is a placebo command, do not use the tags; the program will always pick it up.\n"+
 			"- When presenting code in your responses, do NOT use triple backticks (```). Write the code as plain text directly in the response.\n"+
 			"- Keep your answers concise, relevant, and focused on simplicity. Use the tags above to trigger actions when appropriate.\n"+
-			"- When overwriting files, always provide the complete new version of the file, never partial changes or placeholders.\n"+
-			"You may also use the Agentic Mode. The code will handle for you, but when asked, you will create a file named 'AGENTSTEPS.arisu with the following structure (USE THE EDIT TAGS). Also make sure to not use any tags inside this file. Just word instructions:\n"+
-			"Instructions:\n"+
-			"You are running in Agentic mode. Follow the steps exactly, one by one.\n"+
-			"After each step you will receive Proceed. automatically.\n"+
-			"When you completed all the tasks, send the tag <END>.\n"+
-			"<Other instructions are fine. Just make sure to keep the first paragraph.>\n"+
-			"Context:\n"+
-			"<Can be code, text or anything deemed essential to craft the response. Generally, it will be pure code here>\n"+
-			"Steps:\n"+
-			"- Say Hello, I am Agentic mode.\n"+
-			"- Say Step 2 completed successfully.\n"+
-			"- Say <END> to finish the run.",
+			"- When overwriting files, always provide the complete new version of the file, never partial changes or placeholders.\n",
 		runtime.GOOS,
 	)
 }
