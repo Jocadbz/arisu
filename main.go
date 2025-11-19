@@ -226,7 +226,7 @@ func main() {
 		return
 	}
 
-	fmt.Println("For multi-line input, end with a blank line.")
+	fmt.Println("Enter text. Press Ctrl+D (EOF) on a new line to submit. Type 'exit' to quit.")
 	rl, err := readline.New("λ ")
 	if err != nil {
 		fmt.Printf("Error initializing readline: %v\n", err)
@@ -238,25 +238,33 @@ func main() {
 	for {
 		var inputLines []string
 		for {
+			if len(inputLines) > 0 {
+				rl.SetPrompt(".. ")
+			} else {
+				rl.SetPrompt("λ ")
+			}
+
 			line, err := rl.Readline()
 			if err == io.EOF {
+				if len(inputLines) > 0 {
+					break
+				}
 				return
 			}
 			if err == readline.ErrInterrupt {
+				inputLines = nil
 				continue
 			}
 			if err != nil {
 				fmt.Printf("Error reading line: %v\n", err)
 				return
 			}
-			line = strings.TrimSpace(line)
-			if line == "exit" {
+
+			if len(inputLines) == 0 && strings.TrimSpace(line) == "exit" {
 				fmt.Println("Goodbye!")
 				return
 			}
-			if line == "" {
-				break
-			}
+
 			inputLines = append(inputLines, line)
 		}
 		if len(inputLines) == 0 {
@@ -515,4 +523,3 @@ func appendToFile(filename, text string) error {
 	_, err = f.WriteString(text)
 	return err
 }
-
