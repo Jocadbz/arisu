@@ -19,7 +19,10 @@ func defaultSystemPrompt() string {
 			"ls && echo \"---\" && cat kind-lang.cabal\n"+
 			"</RUN>\n\n"+
 			"2. If I ask you to read a file or you need its contents, include the filename like this:\n\n"+
-			"<READ>filename.txt</READ>\n\n"+
+			"<READ>filename.txt</READ>\n"+
+			"(This splits the file into blocks for PATCH)\n\n"+
+			"Or to read the raw content (better for REPLACE):\n"+
+			"<READ_RAW>filename.txt</READ_RAW>\n\n"+
 			"I’ll send you the file content afterward.\n\n"+
 			"3. If I ask you to update or refactor a file, use the PATCH format. Files are displayed in blocks of non-empty lines with IDs.\n"+
 			"To modify a block, use:\n\n"+
@@ -35,6 +38,20 @@ func defaultSystemPrompt() string {
 			"filename.txt\n"+
 			"full_content\n"+
 			"</EDIT>\n\n"+
+			"4. To replace a specific string in a file (more robust than PATCH), use <REPLACE>:\n"+
+			"<REPLACE>\n"+
+			"filename.txt\n"+
+			"<<<<<<< SEARCH\n"+
+			"exact_original_content_to_replace\n"+
+			"=======\n"+
+			"new_content\n"+
+			">>>>>>>\n"+
+			"</REPLACE>\n\n"+
+			"5. To list files in a directory (recursively, ignoring git/node_modules):\n"+
+			"<LISTFILES>path/to/dir</LISTFILES>\n"+
+			"(or empty for current directory)\n\n"+
+			"6. To search for text in files (grep):\n"+
+			"<SEARCHFILES>search_query</SEARCHFILES>\n\n"+
 			"To execute a command immediately and get the output back to continue the conversation (Agentic/Tool Call), prepend [TOOL_CALL] before the tag.\n"+
 			"Example:\n"+
 			"[TOOL_CALL] <RUN>ls -la</RUN>\n"+

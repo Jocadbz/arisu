@@ -489,6 +489,101 @@ func (r ReadAction) Execute(client AIClient, config *Config, isToolCall bool) (s
 	return sb.String(), nil
 }
 
+type ReadRawAction struct {
+	Filename string
+}
+
+func (r ReadRawAction) Execute(client AIClient, config *Config, isToolCall bool) (string, error) {
+	content, err := os.ReadFile(r.Filename)
+	if err != nil {
+		fmt.Printf("Error reading %s: %v\n", r.Filename, err)
+		return fmt.Sprintf("Error reading %s: %v", r.Filename, err), err
+	}
+	fmt.Printf("Content of %s displayed raw.\n", r.Filename)
+	return fmt.Sprintf("Content of %s:\n%s", r.Filename, string(content)), nil
+}
+
+type ReplaceAction struct {
+	Filename string
+	Old      string
+	New      string
+}
+
+func (r ReplaceAction) Execute(client AIClient, config *Config, isToolCall bool) (string, error) {
+	if config.AutoEdit || confirmAction(fmt.Sprintf("Replace content in %s?", r.Filename)) {
+		content, err := os.ReadFile(r.Filename)
+		if err != nil {
+			fmt.Printf("Error reading %s: %v\n", r.Filename, err)
+			return fmt.Sprintf("Error reading %s: %v", r.Filename, err), err
+		}
+
+		sContent := string(content)
+		if !strings.Contains(sContent, r.Old) {
+			return fmt.Sprintf("Error: Original content not found in %s", r.Filename), fmt.Errorf("content not found")
+		}
+
+		if strings.Count(sContent, r.Old) > 1 {
+			return fmt.Sprintf("Error: Original content found multiple times in %s. Please provide more context.", r.Filename), fmt.Errorf("multiple occurrences")
+		}
+
+		newContent := strings.Replace(sContent, r.Old, r.New, 1)
+		if err := os.WriteFile(r.Filename, []byte(newContent), 0644); err != nil {
+			fmt.Printf("Error writing %s: %v\n", r.Filename, err)
+			return fmt.Sprintf("Error writing %s: %v", r.Filename, err), err
+		}
+		fmt.Printf("File %s updated successfully.\n", r.Filename)
+		return fmt.Sprintf("File %s updated successfully.", r.Filename), nil
+	} else {
+		fmt.Printf("Replace on %s skipped.\n", r.Filename)
+		return fmt.Sprintf("Replace on %s skipped.", r.Filename), nil
+	}
+}
+
+type ListFilesAction struct {
+	Directory string
+}
+
+func (l ListFilesAction) Execute(client AIClient, config *Config, isToolCall bool) (string, error) {
+	dir := l.Directory
+	if dir == "" {
+		dir = "."
+	}
+	var sb strings.Builder
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && (info.Name() == ".git" || info.Name() == "node_modules") {
+			return filepath.SkipDir
+		}
+		if !info.IsDir() {
+			sb.WriteString(path)
+			sb.WriteString("\n")
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Sprintf("Error listing files: %v", err), err
+	}
+	return sb.String(), nil
+}
+
+type SearchFilesAction struct {
+	Query string
+}
+
+func (s SearchFilesAction) Execute(client AIClient, config *Config, isToolCall bool) (string, error) {
+	cmd := exec.Command("grep", "-r", s.Query, ".")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
+			return "No matches found.", nil
+		}
+		return fmt.Sprintf("Error searching files: %v", err), err
+	}
+	return string(output), nil
+}
+
 func handleResponse(response string, client AIClient, config *Config) (string, bool) {
 	var actions []struct {
 		Action     Action
@@ -504,8 +599,12 @@ func handleResponse(response string, client AIClient, config *Config) (string, b
 		editStart := strings.Index(remainingResponse, "<EDIT>")
 		runStart := strings.Index(remainingResponse, "<RUN>")
 		readStart := strings.Index(remainingResponse, "<READ>")
+		readRawStart := strings.Index(remainingResponse, "<READ_RAW>")
+		replaceStart := strings.Index(remainingResponse, "<REPLACE>")
+		listStart := strings.Index(remainingResponse, "<LISTFILES>")
+		searchStart := strings.Index(remainingResponse, "<SEARCHFILES>")
 
-		if patchStart == -1 && editStart == -1 && runStart == -1 && readStart == -1 {
+		if patchStart == -1 && editStart == -1 && runStart == -1 && readStart == -1 && readRawStart == -1 && replaceStart == -1 && listStart == -1 && searchStart == -1 {
 			break
 		}
 
@@ -516,28 +615,25 @@ func handleResponse(response string, client AIClient, config *Config) (string, b
 
 		firstTag := tagInfo{-1, ""}
 
-		if patchStart != -1 {
-			firstTag = tagInfo{patchStart, "PATCH"}
+		checkTag := func(idx int, tag string) {
+			if idx != -1 && (firstTag.start == -1 || idx < firstTag.start) {
+				firstTag = tagInfo{idx, tag}
+			}
 		}
-		if editStart != -1 && (firstTag.start == -1 || editStart < firstTag.start) {
-			firstTag = tagInfo{editStart, "EDIT"}
-		}
-		if runStart != -1 && (firstTag.start == -1 || runStart < firstTag.start) {
-			firstTag = tagInfo{runStart, "RUN"}
-		}
-		if readStart != -1 && (firstTag.start == -1 || readStart < firstTag.start) {
-			firstTag = tagInfo{readStart, "READ"}
-		}
+
+		checkTag(patchStart, "PATCH")
+		checkTag(editStart, "EDIT")
+		checkTag(runStart, "RUN")
+		checkTag(readRawStart, "READ_RAW")
+		checkTag(readStart, "READ")
+		checkTag(replaceStart, "REPLACE")
+		checkTag(listStart, "LISTFILES")
+		checkTag(searchStart, "SEARCHFILES")
 
 		// Check for [TOOL_CALL] prefix
 		isToolCall := false
 		prefix := remainingResponse[:firstTag.start]
 		if strings.Contains(prefix, "[TOOL_CALL]") {
-			// Simple check: if [TOOL_CALL] appears in the text before the tag,
-			// and after the previous tag (which is handled by slicing remainingResponse).
-			// However, we need to be careful about false positives if the user just typed it.
-			// But the instruction is to prepend it.
-			// Let's check if it's the last non-whitespace thing before the tag.
 			trimmedPrefix := strings.TrimSpace(prefix)
 			if strings.HasSuffix(trimmedPrefix, "[TOOL_CALL]") {
 				isToolCall = true
@@ -614,6 +710,72 @@ func handleResponse(response string, client AIClient, config *Config) (string, b
 				Action     Action
 				IsToolCall bool
 			}{ReadAction{Filename: strings.TrimSpace(content)}, isToolCall})
+		case "READ_RAW":
+			endTag = "</READ_RAW>"
+			endIdx = strings.Index(remainingResponse, endTag)
+			if endIdx == -1 {
+				remainingResponse = remainingResponse[firstTag.start+len("<READ_RAW>"):]
+				continue
+			}
+			content = remainingResponse[firstTag.start+len("<READ_RAW>") : endIdx]
+			actions = append(actions, struct {
+				Action     Action
+				IsToolCall bool
+			}{ReadRawAction{Filename: strings.TrimSpace(content)}, isToolCall})
+		case "REPLACE":
+			endTag = "</REPLACE>"
+			endIdx = strings.Index(remainingResponse, endTag)
+			if endIdx == -1 {
+				remainingResponse = remainingResponse[firstTag.start+len("<REPLACE>"):]
+				continue
+			}
+			content = remainingResponse[firstTag.start+len("<REPLACE>") : endIdx]
+			lines := strings.SplitN(strings.TrimSpace(content), "\n", 2)
+			if len(lines) >= 2 {
+				filename := strings.TrimSpace(lines[0])
+				rest := lines[1]
+
+				searchMarker := "<<<<<<< SEARCH"
+				midMarker := "======="
+				endMarker := ">>>>>>>"
+
+				sIdx := strings.Index(rest, searchMarker)
+				mIdx := strings.Index(rest, midMarker)
+				eIdx := strings.Index(rest, endMarker)
+
+				if sIdx != -1 && mIdx != -1 && eIdx != -1 && mIdx > sIdx && eIdx > mIdx {
+					oldContent := strings.Trim(rest[sIdx+len(searchMarker):mIdx], "\n")
+					newContent := strings.Trim(rest[mIdx+len(midMarker):eIdx], "\n")
+					actions = append(actions, struct {
+						Action     Action
+						IsToolCall bool
+					}{ReplaceAction{Filename: filename, Old: oldContent, New: newContent}, isToolCall})
+				}
+			}
+		case "LISTFILES":
+			endTag = "</LISTFILES>"
+			endIdx = strings.Index(remainingResponse, endTag)
+			if endIdx == -1 {
+				remainingResponse = remainingResponse[firstTag.start+len("<LISTFILES>"):]
+				continue
+			}
+			content = remainingResponse[firstTag.start+len("<LISTFILES>") : endIdx]
+			actions = append(actions, struct {
+				Action     Action
+				IsToolCall bool
+			}{ListFilesAction{Directory: strings.TrimSpace(content)}, isToolCall})
+		case "SEARCHFILES":
+			endTag = "</SEARCHFILES>"
+			endIdx = strings.Index(remainingResponse, endTag)
+			if endIdx == -1 {
+				remainingResponse = remainingResponse[firstTag.start+len("<SEARCHFILES>"):]
+				continue
+			}
+			content = remainingResponse[firstTag.start+len("<SEARCHFILES>") : endIdx]
+			actions = append(actions, struct {
+				Action     Action
+				IsToolCall bool
+			}{SearchFilesAction{Query: strings.TrimSpace(content)}, isToolCall})
 		}
 
 		if endIdx != -1 {
