@@ -12,19 +12,25 @@ import (
 
 // GrokClient represents a client for interacting with the Grok API.
 type GrokClient struct {
-	apiKey  string
-	model   string
-	history []Message
+	apiKey     string
+	model      string
+	history    []Message
+	maxHistory int
 }
 
 // NewGrokClient initializes a new Grok client with the provided API key and model.
-func NewGrokClient(apiKey, model string) *GrokClient {
+func NewGrokClient(apiKey, model string, maxHistory int) *GrokClient {
 	history := []Message{{Role: "system", Content: defaultSystemPrompt()}}
-	return &GrokClient{apiKey: apiKey, model: model, history: history}
+	return &GrokClient{apiKey: apiKey, model: model, history: history, maxHistory: maxHistory}
 }
 
 // SendMessage sends a message to the Grok API and streams the response.
 func (c *GrokClient) SendMessage(input string) (string, error) {
+	// Truncate history if needed, keeping system prompt
+	if len(c.history) > c.maxHistory {
+		c.history = append([]Message{c.history[0]}, c.history[len(c.history)-(c.maxHistory-1):]...)
+	}
+
 	c.history = append(c.history, Message{Role: "user", Content: input})
 
 	messages := make([]map[string]string, len(c.history))

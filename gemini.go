@@ -12,11 +12,12 @@ import (
 
 // Client represents a client for interacting with the Gemini API.
 type Client struct {
-	cs *genai.ChatSession
+	cs         *genai.ChatSession
+	maxHistory int
 }
 
 // NewClient initializes a new Gemini client with the provided API key.
-func NewClient(apiKey, modelName string) *Client {
+func NewClient(apiKey, modelName string, maxHistory int) *Client {
 	ctx := context.Background()
 	genaiClient, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
@@ -26,11 +27,19 @@ func NewClient(apiKey, modelName string) *Client {
 	model.SystemInstruction = genai.NewUserContent(genai.Text(defaultSystemPrompt()))
 	cs := model.StartChat()
 
-	return &Client{cs: cs}
+	return &Client{cs: cs, maxHistory: maxHistory}
 }
 
 // SendMessage sends a message to the Gemini API and streams the response.
 func (c *Client) SendMessage(input string) (string, error) {
+	// Truncate history if needed
+	// Gemini history is []*genai.Content
+	if len(c.cs.History) > c.maxHistory {
+		// Keep the last maxHistory messages
+		// Note: Gemini ChatSession history does NOT include system instruction (it's separate)
+		c.cs.History = c.cs.History[len(c.cs.History)-c.maxHistory:]
+	}
+
 	ctx := context.Background()
 	iter := c.cs.SendMessageStream(ctx, genai.Text(input))
 	var fullResponse strings.Builder

@@ -12,21 +12,27 @@ import (
 
 // OpenRouterClient represents a client for interacting with the OpenRouter API.
 type OpenRouterClient struct {
-	apiKey  string
-	model   string
-	history []Message
+	apiKey     string
+	model      string
+	history    []Message
+	maxHistory int
 }
 
 // NewOpenRouterClient initializes a new OpenRouter client.
-func NewOpenRouterClient(apiKey, model string) *OpenRouterClient {
+func NewOpenRouterClient(apiKey, model string, maxHistory int) *OpenRouterClient {
 	// Remove the "openrouter-" prefix for the API call.
 	apiModel := strings.TrimPrefix(model, "openrouter-")
 	history := []Message{{Role: "system", Content: defaultSystemPrompt()}}
-	return &OpenRouterClient{apiKey: apiKey, model: apiModel, history: history}
+	return &OpenRouterClient{apiKey: apiKey, model: apiModel, history: history, maxHistory: maxHistory}
 }
 
 // SendMessage sends a message to the OpenRouter API and streams the response.
 func (c *OpenRouterClient) SendMessage(input string) (string, error) {
+	// Truncate history if needed, keeping system prompt
+	if len(c.history) > c.maxHistory {
+		c.history = append([]Message{c.history[0]}, c.history[len(c.history)-(c.maxHistory-1):]...)
+	}
+
 	c.history = append(c.history, Message{Role: "user", Content: input})
 
 	messages := make([]map[string]string, len(c.history))

@@ -62,7 +62,8 @@ func defaultSystemPrompt() string {
 			"- NEVER use the tags unless you are sure that it is a valid command. If it is a placebo command, do not use the tags; the program will always pick it up.\n"+
 			"- When presenting code in your responses, do NOT use triple backticks (```). Write the code as plain text directly in the response.\n"+
 			"- Keep your answers concise, relevant, and focused on simplicity. Use the tags above to trigger actions when appropriate.\n"+
-			"- When overwriting files, always provide the complete new version of the file, never partial changes or placeholders.\n",
+			"- When overwriting files, always provide the complete new version of the file, never partial changes or placeholders.\n"+
+			"- You can reference files using @filename syntax. The user may use this to provide file contents to you.\n",
 		runtime.GOOS,
 	)
 }

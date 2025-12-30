@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/chzyer/readline"
 )
 
 type Message struct {
@@ -201,18 +199,19 @@ func main() {
 	}
 
 	var client AIClient
+	maxHistory := 50 // Default max history length
 	if provider == "gemini" {
 		model := config.SelectedModel
 		if model == "gemini" {
 			model = "gemini-2.0-flash"
 		}
-		client = NewClient(apiKey, model)
+		client = NewClient(apiKey, model, maxHistory)
 	} else if provider == "grok" {
-		client = NewGrokClient(apiKey, config.SelectedModel)
+		client = NewGrokClient(apiKey, config.SelectedModel, maxHistory)
 	} else if provider == "openai" {
-		client = NewOpenAIClient(apiKey, config.SelectedModel)
+		client = NewOpenAIClient(apiKey, config.SelectedModel, maxHistory)
 	} else if provider == "openrouter" {
-		client = NewOpenRouterClient(apiKey, config.SelectedModel)
+		client = NewOpenRouterClient(apiKey, config.SelectedModel, maxHistory)
 	}
 
 	if len(args) > 0 {
@@ -240,73 +239,7 @@ func main() {
 		return
 	}
 
-	fmt.Println("Enter text. Press Ctrl+D (EOF) on a new line to submit. Type 'exit' to quit.")
-	rl, err := readline.New("λ ")
-	if err != nil {
-		fmt.Printf("Error initializing readline: %v\n", err)
-		return
-	}
-	defer rl.Close()
-
-	lastLoggedIndex := 0
-	for {
-		var inputLines []string
-		for {
-			if len(inputLines) > 0 {
-				rl.SetPrompt(".. ")
-			} else {
-				rl.SetPrompt("λ ")
-			}
-
-			line, err := rl.Readline()
-			if err == io.EOF {
-				if len(inputLines) > 0 {
-					break
-				}
-				return
-			}
-			if err == readline.ErrInterrupt {
-				inputLines = nil
-				continue
-			}
-			if err != nil {
-				fmt.Printf("Error reading line: %v\n", err)
-				return
-			}
-
-			if len(inputLines) == 0 && strings.TrimSpace(line) == "exit" {
-				fmt.Println("Goodbye!")
-				return
-			}
-
-			inputLines = append(inputLines, line)
-		}
-		if len(inputLines) == 0 {
-			continue
-		}
-		input := strings.Join(inputLines, "\n")
-		response, err := client.SendMessage(input)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			continue
-		}
-
-		for {
-			output, isToolCall := handleResponse(response, client, config)
-			_ = logMessages(logFile, client.GetHistory(), lastLoggedIndex)
-			lastLoggedIndex = len(client.GetHistory())
-
-			if isToolCall {
-				response, err = client.SendMessage(output)
-				if err != nil {
-					fmt.Printf("Error sending tool output: %v\n", err)
-					break
-				}
-			} else {
-				break
-			}
-		}
-	}
+	StartREPL(client, config, logFile)
 }
 
 func contains(slice []string, item string) bool {

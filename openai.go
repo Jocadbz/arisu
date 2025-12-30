@@ -11,20 +11,27 @@ import (
 
 // OpenAIClient representa um cliente para interação com a API da OpenAI.
 type OpenAIClient struct {
-	client  *openai.Client
-	model   string
-	history []Message
+	client     *openai.Client
+	model      string
+	history    []Message
+	maxHistory int
 }
 
 // NewOpenAIClient inicializa um novo cliente OpenAI com a chave API e o modelo fornecidos.
-func NewOpenAIClient(apiKey, model string) *OpenAIClient {
+func NewOpenAIClient(apiKey, model string, maxHistory int) *OpenAIClient {
 	client := openai.NewClient(apiKey)
 	history := []Message{{Role: "system", Content: defaultSystemPrompt()}}
-	return &OpenAIClient{client: client, model: model, history: history}
+	return &OpenAIClient{client: client, model: model, history: history, maxHistory: maxHistory}
 }
 
 // SendMessage envia uma mensagem para a API da OpenAI e transmite a resposta em tempo real.
 func (c *OpenAIClient) SendMessage(input string) (string, error) {
+	// Truncate history if needed, keeping system prompt
+	if len(c.history) > c.maxHistory {
+		// Keep system prompt (index 0) and the last maxHistory-1 messages
+		c.history = append([]Message{c.history[0]}, c.history[len(c.history)-(c.maxHistory-1):]...)
+	}
+
 	c.history = append(c.history, Message{Role: "user", Content: input})
 
 	messages := make([]openai.ChatCompletionMessage, len(c.history))
