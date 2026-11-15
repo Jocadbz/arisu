@@ -1,3 +1,11 @@
+# RIP Arisu (2025 -2026)
+
+Hi, I'm the guy that made this. It has been a while. If you really wanna use a coding harness created by me, you should probably use [navi](https://github.com/Jocadbz/navi) instead of this.
+
+Anyways, project ded. Bye.
+
+---
+
 # Arisu
 
 Seamless AI coding and editing on the terminal
